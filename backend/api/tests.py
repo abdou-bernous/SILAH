@@ -23,18 +23,45 @@ class PayrollEngineTests(TestCase):
 
     def test_irg_smoothing_is_continuous_at_35000(self):
         self.assertEqual(compute_irg(Decimal('35000')), Decimal('2070.00'))
+        # Published worked example: gross 34 500 -> taxable 31 395 -> IRG 731.7
+        self.assertEqual(compute_irg(Decimal('31395')), Decimal('731.72'))
         self.assertLess(compute_irg(Decimal('34990')), Decimal('2070.00'))
         self.assertLess(compute_irg(Decimal('30010')), Decimal('20'))
 
     def test_full_payslip(self):
         r = compute_payslip(Decimal('68000'), [Bonus('Prime', Decimal('6000')),
-                                               Bonus('Panier', Decimal('3000'), contributory=False, taxable=False)])
+                                               Bonus('Allocations', Decimal('3000'), contributory=False, tax='exempt')])
         self.assertEqual(r.gross_salary, Decimal('74000.00'))
         self.assertEqual(r.social_contributions, Decimal('6660.00'))
         self.assertEqual(r.taxable_salary, Decimal('67340.00'))
         self.assertEqual(r.income_tax, Decimal('10481.80'))
         self.assertEqual(r.net_salary, Decimal('59858.20'))
-        self.assertEqual(r.employer_cost, Decimal('96240.00'))
+        # 25 % CNAS + 0.5 % FNPOS on 74 000
+        self.assertEqual(r.employer_contributions, Decimal('18870.00'))
+        self.assertEqual(r.employer_cost, Decimal('95870.00'))
+        self.assertEqual(r.warnings, [])
+
+    def test_panier_is_taxable_but_not_contributory(self):
+        r = compute_payslip(Decimal('68000'), [Bonus('Panier', Decimal('2400'), contributory=False, tax='scale')])
+        self.assertEqual(r.social_contributions, Decimal('6120.00'))   # 9 % of 68 000 only
+        self.assertEqual(r.taxable_salary, Decimal('64280.00'))        # 70 400 - 6 120
+
+    def test_quarterly_bonus_flat_10_percent(self):
+        r = compute_payslip(Decimal('68000'), [Bonus('PRC', Decimal('9000'), contributory=True, tax='flat')])
+        self.assertEqual(r.flat_tax, Decimal('819.00'))                # 10 % of 9 000 net of 9 % CNAS
+        self.assertEqual(r.taxable_salary, Decimal('61880.00'))        # scale base excludes the bonus
+        self.assertEqual(r.income_tax, compute_irg(Decimal('61880')))
+
+    def test_disabled_worker_extended_smoothing(self):
+        # Standard: 40 300 -> 3 181; disabled: 3 181 x 93/61 - 81 213/41
+        self.assertEqual(compute_irg(Decimal('40300')), Decimal('3181.00'))
+        self.assertEqual(compute_irg(Decimal('40300'), disabled=True), Decimal('2868.92'))
+        self.assertEqual(compute_irg(Decimal('30000'), disabled=True), Decimal('0.00'))
+        self.assertEqual(compute_irg(Decimal('50000'), disabled=True), compute_irg(Decimal('50000')))
+
+    def test_snmg_warning(self):
+        self.assertTrue(compute_payslip(Decimal('20000')).warnings)
+        self.assertFalse(compute_payslip(Decimal('24000')).warnings)
 
     def test_unpaid_days_reduce_gross(self):
         r = compute_payslip(Decimal('44000'), unpaid_days=Decimal('2'))
@@ -286,3 +313,89 @@ class EmployeeAdminTests(ApiTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn('leaves', r.data['to_review'])
         self.assertEqual(r.data['balances'][0]['leave_type'], 'annual')
+
+
+class MultiCompanyTests(ApiTestCase):
+    def setUp(self):
+        super().setUp()
+        self.other_co = Company.objects.create(name='Autre SARL')
+        self.other_hr = User.objects.create_user('rh2', password=self.password, company=self.other_co, role=User.Role.HR)
+        self.other_emp = User.objects.create_user('emp2', password=self.password, company=self.other_co,
+                                                  base_salary=Decimal('60000'))
+        self.accountant = User.objects.create_user('compta', password=self.password, role=User.Role.ACCOUNTANT)
+        self.accountant.managed_companies.set([self.company])
+        self.admin = User.objects.create_user('admin', password=self.password, role=User.Role.ADMIN)
+
+    def test_hr_only_sees_own_company(self):
+        ids = {e['id'] for e in self.client_for(self.hr).get('/api/employees/').data}
+        self.assertIn(self.emp.id, ids)
+        self.assertNotIn(self.other_emp.id, ids)
+        # A forged X-Company header does not let HR into another company.
+        r = self.client_for(self.hr).get('/api/employees/', HTTP_X_COMPANY=str(self.other_co.id))
+        self.assertNotIn(self.other_emp.id, {e['id'] for e in r.data})
+        self.assertEqual(self.client_for(self.hr).get(f'/api/employees/{self.other_emp.id}/').status_code, 404)
+
+    def test_payroll_run_is_scoped(self):
+        r = self.client_for(self.hr).post('/api/payslips/run/', {'year': 2026, 'month': 10}, format='json')
+        self.assertEqual(len(r.data['created']), 2)
+        self.assertFalse(Payslip.objects.filter(employee=self.other_emp).exists())
+        r = self.client_for(self.hr).post('/api/payslips/run/', {'year': 2026, 'month': 10,
+                                                                 'employees': [self.other_emp.id]}, format='json')
+        self.assertEqual(r.data['created'], [])
+        p = Payslip.objects.filter(company=self.company).first()
+        self.assertEqual(self.client_for(self.other_hr).get(f'/api/payslips/{p.id}/').status_code, 404)
+
+    def test_accountant_switches_between_managed_companies(self):
+        c = self.client_for(self.accountant)
+        ids = {e['id'] for e in c.get('/api/employees/', HTTP_X_COMPANY=str(self.company.id)).data}
+        self.assertIn(self.emp.id, ids)
+        # Not managed: falls back to a managed company, never the requested one.
+        ids = {e['id'] for e in c.get('/api/employees/', HTTP_X_COMPANY=str(self.other_co.id)).data}
+        self.assertNotIn(self.other_emp.id, ids)
+        r = c.post('/api/companies/', {'name': 'Nouvelle EURL', 'city': 'Oran'}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        new_id = r.data['id']
+        self.assertIn(new_id, {x['id'] for x in c.get('/api/companies/').data})
+        r = c.post('/api/employees/', {'username': 'recrue', 'password': 'Un-mot-de-passe-42', 'base_salary': '50000'},
+                   format='json', HTTP_X_COMPANY=str(new_id))
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(User.objects.get(username='recrue').company_id, new_id)
+        self.assertEqual(c.delete(f'/api/companies/{new_id}/').status_code, 403)
+
+    def test_employee_cannot_create_company_or_see_platform(self):
+        c = self.client_for(self.emp)
+        self.assertEqual(c.post('/api/companies/', {'name': 'X'}, format='json').status_code, 403)
+        self.assertEqual(c.get('/api/platform/stats/').status_code, 403)
+        self.assertEqual(self.client_for(self.accountant).get('/api/platform/stats/').status_code, 403)
+
+    def test_hr_cannot_grant_platform_roles(self):
+        r = self.client_for(self.hr).patch(f'/api/employees/{self.emp.id}/', {'role': 'admin'}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_admin_sees_everything(self):
+        c = self.client_for(self.admin)
+        r = c.get('/api/platform/stats/')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data['totals']['companies'], 2)
+        self.assertEqual(len(c.get('/api/companies/').data), 2)
+        ids = {e['id'] for e in c.get('/api/employees/', HTTP_X_COMPANY=str(self.other_co.id)).data}
+        self.assertIn(self.other_emp.id, ids)
+        r = c.post('/api/platform/users/', {'username': 'cab', 'password': 'Un-mot-de-passe-42', 'role': 'accountant',
+                                            'companies': [self.other_co.id]}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(list(User.objects.get(username='cab').managed_companies.all()), [self.other_co])
+        r = c.post('/api/platform/users/', {'username': 'x', 'password': 'Un-mot-de-passe-42', 'role': 'employee'},
+                   format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(c.delete(f'/api/companies/{self.other_co.id}/').status_code, 204)
+
+    def test_company_documents_do_not_leak(self):
+        self.client_for(self.other_hr).post('/api/documents/', {
+            'title': 'Note interne', 'category': 'company', 'file': SimpleUploadedFile('n.pdf', b'x')}, format='multipart')
+        self.assertEqual(self.client_for(self.emp).get('/api/documents/').data, [])
+        self.assertEqual(len(self.client_for(self.other_emp).get('/api/documents/').data), 1)
+
+    def test_manager_cannot_review_other_company(self):
+        lr = LeaveRequest.objects.create(employee=self.other_emp, leave_type='sick', start_date=date(2026, 3, 1),
+                                         end_date=date(2026, 3, 1), days=1)
+        self.assertEqual(self.client_for(self.hr).post(f'/api/leaves/{lr.id}/approve/').status_code, 404)

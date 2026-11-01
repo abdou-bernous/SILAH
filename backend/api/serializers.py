@@ -1,3 +1,5 @@
+from datetime import date
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
@@ -14,7 +16,8 @@ User = get_user_model()
 SELF_EDITABLE_FIELDS = ['phone', 'emergency_contact']
 # Fields that go through an HR-validated change request.
 REQUESTABLE_FIELDS = ['first_name', 'last_name', 'address', 'city', 'postal_code',
-                      'bank_name', 'iban', 'social_security_number', 'birth_date']
+                      'bank_name', 'iban', 'social_security_number', 'nin', 'birth_date',
+                      'marital_status', 'children_count']
 
 
 def validate_upload(file):
@@ -26,8 +29,72 @@ def validate_upload(file):
 class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
-        fields = ['id', 'name', 'legal_form', 'address', 'city', 'nif', 'nis', 'rc',
-                  'cnas_number', 'weekend_days', 'annual_leave_days']
+        fields = ['id', 'name', 'name_ar', 'legal_form', 'sector', 'address', 'city', 'phone', 'email',
+                  'nif', 'nis', 'rc', 'cnas_number', 'weekend_days', 'annual_leave_days', 'is_active']
+        read_only_fields = ['is_active']
+
+
+class CompanyAdminSerializer(CompanySerializer):
+    """Company as seen by accountants and the platform admin, with a few figures."""
+    employee_count = serializers.IntegerField(read_only=True)
+    managers = serializers.SerializerMethodField()
+
+    class Meta(CompanySerializer.Meta):
+        fields = CompanySerializer.Meta.fields + ['employee_count', 'managers', 'created_at']
+        read_only_fields = ['employee_count', 'created_at']
+
+    def get_managers(self, obj):
+        return [{'id': u.id, 'full_name': u.get_full_name() or u.username} for u in obj.managers.all()]
+
+
+class PlatformUserSerializer(serializers.ModelSerializer):
+    """Accountants and platform admins, managed by the platform admin."""
+    full_name = serializers.SerializerMethodField()
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    companies = serializers.PrimaryKeyRelatedField(source='managed_companies', many=True,
+                                                   queryset=Company.objects.all(), required=False)
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'full_name', 'role', 'phone',
+                  'is_active', 'password', 'companies', 'last_login', 'date_joined']
+        read_only_fields = ['last_login', 'date_joined']
+
+    def get_full_name(self, obj):
+        return obj.get_full_name() or obj.username
+
+    def validate_role(self, value):
+        if value not in (User.Role.ACCOUNTANT, User.Role.ADMIN):
+            raise serializers.ValidationError('Rôle de plateforme invalide.')
+        return value
+
+    def validate_password(self, value):
+        if value:
+            validate_password(value)
+        return value
+
+    def create(self, validated_data):
+        password = validated_data.pop('password', None)
+        companies = validated_data.pop('managed_companies', [])
+        if not password:
+            raise serializers.ValidationError({'password': 'Mot de passe initial requis.'})
+        user = User(**validated_data)
+        user.set_password(password)
+        user.save()
+        user.managed_companies.set(companies)
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        companies = validated_data.pop('managed_companies', None)
+        for k, v in validated_data.items():
+            setattr(instance, k, v)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        if companies is not None:
+            instance.managed_companies.set(companies)
+        return instance
 
 
 class UserLiteSerializer(serializers.ModelSerializer):
@@ -47,14 +114,18 @@ class ProfileSerializer(serializers.ModelSerializer):
     manager = UserLiteSerializer(read_only=True)
     company = CompanySerializer(read_only=True)
     is_hr = serializers.BooleanField(read_only=True)
+    is_platform_admin = serializers.BooleanField(read_only=True)
     team_size = serializers.SerializerMethodField()
+    companies = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'full_name', 'role', 'is_hr',
-                  'employee_number', 'job_title', 'department', 'contract_type', 'hire_date',
-                  'birth_date', 'social_security_number', 'phone', 'address', 'city', 'postal_code',
-                  'emergency_contact', 'bank_name', 'iban', 'manager', 'company', 'team_size']
+                  'is_platform_admin', 'employee_number', 'job_title', 'department', 'qualification',
+                  'contract_type', 'hire_date', 'birth_date', 'social_security_number', 'nin',
+                  'marital_status', 'children_count', 'phone', 'address', 'city', 'postal_code',
+                  'emergency_contact', 'bank_name', 'iban', 'payment_method', 'manager', 'company',
+                  'team_size', 'companies']
         read_only_fields = [f for f in fields if f not in SELF_EDITABLE_FIELDS]
 
     def get_full_name(self, obj):
@@ -62,6 +133,11 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     def get_team_size(self, obj):
         return obj.team.filter(is_active=True).count()
+
+    def get_companies(self, obj):
+        # Lazy import: permissions imports models, serializers are imported by views.
+        from .permissions import managed_companies
+        return [{'id': c.id, 'name': c.name} for c in managed_companies(obj).filter(is_active=True).order_by('name')]
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
@@ -73,9 +149,16 @@ class EmployeeSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'password', 'first_name', 'last_name', 'full_name', 'role',
-                  'is_active', 'employee_number', 'job_title', 'department', 'contract_type', 'hire_date',
-                  'birth_date', 'social_security_number', 'phone', 'address', 'city', 'postal_code',
-                  'emergency_contact', 'bank_name', 'iban', 'base_salary', 'manager', 'manager_name']
+                  'is_active', 'employee_number', 'job_title', 'department', 'qualification', 'contract_type',
+                  'hire_date', 'birth_date', 'social_security_number', 'nin', 'marital_status', 'children_count',
+                  'is_disabled', 'phone', 'address', 'city', 'postal_code', 'emergency_contact', 'bank_name',
+                  'iban', 'payment_method', 'base_salary', 'manager', 'manager_name']
+
+    def validate_role(self, value):
+        # Company-level screens can only hand out company roles.
+        if value not in (User.Role.EMPLOYEE, User.Role.MANAGER, User.Role.HR):
+            raise serializers.ValidationError('Rôle invalide pour un salarié.')
+        return value
 
     def get_full_name(self, obj):
         return obj.get_full_name() or obj.username
@@ -86,6 +169,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def validate_manager(self, value):
         if value and self.instance and value.id == self.instance.id:
             raise serializers.ValidationError('Un salarié ne peut pas être son propre manager.')
+        company = self.context.get('company')
+        if value and company and value.company_id != company.id:
+            raise serializers.ValidationError("Le manager doit appartenir à la même entreprise.")
         return value
 
     def validate_password(self, value):
@@ -129,7 +215,7 @@ class ChangePasswordSerializer(serializers.Serializer):
 class PayslipLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayslipLine
-        fields = ['code', 'label', 'kind', 'base', 'rate', 'employee_amount', 'employer_amount']
+        fields = ['code', 'label', 'label_ar', 'kind', 'base', 'rate', 'employee_amount', 'employer_amount']
 
 
 class PayslipListSerializer(serializers.ModelSerializer):
@@ -149,29 +235,32 @@ class PayslipDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payslip
         fields = ['id', 'employee', 'company', 'year', 'month', 'status', 'job_title', 'department',
-                  'worked_days', 'unpaid_days', 'gross_salary', 'social_contributions', 'taxable_salary',
-                  'income_tax', 'net_salary', 'employer_contributions', 'employer_cost', 'lines',
+                  'qualification', 'worked_days', 'worked_hours', 'unpaid_days', 'gross_salary',
+                  'social_contributions', 'taxable_salary', 'income_tax', 'flat_tax', 'non_taxable',
+                  'net_salary', 'employer_contributions', 'employer_cost', 'lines',
                   'created_at', 'published_at', 'viewed_at']
 
     def get_employee(self, obj):
         e = obj.employee
         return {
             'id': e.id, 'full_name': e.get_full_name() or e.username, 'employee_number': e.employee_number,
-            'social_security_number': e.social_security_number, 'hire_date': e.hire_date,
-            'contract_type': e.get_contract_type_display(), 'address': e.address, 'city': e.city,
-            'iban': e.iban, 'bank_name': e.bank_name,
+            'social_security_number': e.social_security_number, 'nin': e.nin, 'hire_date': e.hire_date,
+            'contract_type': e.contract_type, 'address': e.address, 'city': e.city,
+            'iban': e.iban, 'bank_name': e.bank_name, 'marital_status': e.marital_status,
+            'children_count': e.children_count, 'payment_method': e.payment_method,
         }
 
     def get_company(self, obj):
-        c = obj.employee.company
+        c = obj.company or obj.employee.company
         return CompanySerializer(c).data if c else None
 
 
 class BonusInputSerializer(serializers.Serializer):
     label = serializers.CharField(max_length=150)
+    label_ar = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
     contributory = serializers.BooleanField(default=True)
-    taxable = serializers.BooleanField(default=True)
+    tax = serializers.ChoiceField(choices=['scale', 'flat', 'exempt'], default='scale')
 
 
 class PayrollRunSerializer(serializers.Serializer):
@@ -190,9 +279,9 @@ class DocumentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Document
-        fields = ['id', 'employee', 'employee_name', 'category', 'category_label', 'title', 'description',
+        fields = ['id', 'company', 'employee', 'employee_name', 'category', 'category_label', 'title', 'description',
                   'file', 'file_name', 'file_size', 'created_at', 'viewed_at']
-        read_only_fields = ['created_at', 'viewed_at']
+        read_only_fields = ['company', 'created_at', 'viewed_at']
         # Files are confidential: never expose a public media URL, they are
         # downloaded through the authenticated /download/ action instead.
         extra_kwargs = {'file': {'write_only': True}}
@@ -300,7 +389,17 @@ class ProfileChangeRequestSerializer(serializers.ModelSerializer):
         unknown = set(value) - set(REQUESTABLE_FIELDS)
         if unknown:
             raise serializers.ValidationError(f"Champs non modifiables : {', '.join(sorted(unknown))}")
-        return {k: str(v).strip() for k, v in value.items()}
+        cleaned = {k: str(v).strip() for k, v in value.items()}
+        if 'marital_status' in cleaned and cleaned['marital_status'] not in User.MaritalStatus.values:
+            raise serializers.ValidationError('Situation familiale invalide.')
+        if 'children_count' in cleaned and not cleaned['children_count'].isdigit():
+            raise serializers.ValidationError("Nombre d'enfants invalide.")
+        if cleaned.get('birth_date'):
+            try:
+                date.fromisoformat(cleaned['birth_date'])
+            except ValueError:
+                raise serializers.ValidationError('Date de naissance invalide.')
+        return cleaned
 
 
 class ReviewSerializer(serializers.Serializer):

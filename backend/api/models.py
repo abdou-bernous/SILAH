@@ -5,10 +5,19 @@ from django.db import models
 
 
 class Company(models.Model):
-    """The employer. The MVP runs one company per deployment, but every
-    employee points at it so payslip headers and the weekend rule come from data."""
+    """An employer. One deployment hosts many companies: accountants (cabinets
+    comptables / gestionnaires de paie) manage several of them, HR users manage
+    their own, and the platform admin sees all of them."""
 
     name = models.CharField(max_length=200)
+    name_ar = models.CharField('Raison sociale (arabe)', max_length=200, blank=True)
+    sector = models.CharField("Secteur d'activité", max_length=120, blank=True)
+    phone = models.CharField(max_length=30, blank=True)
+    email = models.EmailField(blank=True)
+    is_active = models.BooleanField(default=True)
+    managers = models.ManyToManyField('User', blank=True, related_name='managed_companies')
+    created_by = models.ForeignKey('User', null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name='created_companies')
     legal_form = models.CharField(max_length=50, blank=True)
     address = models.CharField(max_length=255, blank=True)
     city = models.CharField(max_length=100, blank=True)
@@ -38,6 +47,19 @@ class User(AbstractUser):
         EMPLOYEE = 'employee', 'Salarié'
         MANAGER = 'manager', 'Manager'
         HR = 'hr', 'Gestionnaire RH'
+        ACCOUNTANT = 'accountant', 'Comptable / gestionnaire de paie'
+        ADMIN = 'admin', 'Administrateur plateforme'
+
+    class MaritalStatus(models.TextChoices):
+        SINGLE = 'single', 'Célibataire'
+        MARRIED = 'married', 'Marié(e)'
+        DIVORCED = 'divorced', 'Divorcé(e)'
+        WIDOWED = 'widowed', 'Veuf / veuve'
+
+    class PaymentMethod(models.TextChoices):
+        TRANSFER = 'transfer', 'Virement'
+        CHEQUE = 'cheque', 'Chèque'
+        CASH = 'cash', 'Espèces'
 
     class ContractType(models.TextChoices):
         CDI = 'cdi', 'CDI'
@@ -56,6 +78,14 @@ class User(AbstractUser):
     hire_date = models.DateField(null=True, blank=True)
     birth_date = models.DateField(null=True, blank=True)
     social_security_number = models.CharField('N° sécurité sociale', max_length=30, blank=True)
+    # Numéro d'identification nationale: required on the annual G29 return since the 2026 finance law.
+    nin = models.CharField('NIN', max_length=30, blank=True)
+    qualification = models.CharField('Catégorie / échelon', max_length=60, blank=True)
+    marital_status = models.CharField(max_length=20, choices=MaritalStatus.choices, default=MaritalStatus.SINGLE)
+    children_count = models.PositiveSmallIntegerField(default=0)
+    # Disabled workers (and retirees) get the extended IRG smoothing up to 42 500 DA.
+    is_disabled = models.BooleanField('Travailleur handicapé / retraité', default=False)
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.TRANSFER)
 
     phone = models.CharField(max_length=30, blank=True)
     address = models.CharField(max_length=255, blank=True)
@@ -69,8 +99,13 @@ class User(AbstractUser):
     base_salary = models.DecimalField('Salaire de base mensuel', max_digits=12, decimal_places=2, default=Decimal('0'))
 
     @property
+    def is_platform_admin(self):
+        return self.role == self.Role.ADMIN or self.is_superuser
+
+    @property
     def is_hr(self):
-        return self.role == self.Role.HR or self.is_superuser
+        """Has HR powers over at least one company (the active one is decided per request)."""
+        return self.role in (self.Role.HR, self.Role.ACCOUNTANT, self.Role.ADMIN) or self.is_superuser
 
     @property
     def is_manager(self):
@@ -86,6 +121,7 @@ class Payslip(models.Model):
         PUBLISHED = 'published', 'Publié'
 
     employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='payslips')
+    company = models.ForeignKey(Company, null=True, on_delete=models.SET_NULL, related_name='payslips')
     year = models.PositiveIntegerField()
     month = models.PositiveSmallIntegerField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
@@ -94,13 +130,17 @@ class Payslip(models.Model):
     # showing the job/salary that applied that month.
     job_title = models.CharField(max_length=120, blank=True)
     department = models.CharField(max_length=120, blank=True)
+    qualification = models.CharField(max_length=60, blank=True)
     worked_days = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal('0'))
+    worked_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('173.33'))
     unpaid_days = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal('0'))
 
     gross_salary = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     social_contributions = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     taxable_salary = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     income_tax = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    flat_tax = models.DecimalField('IRG 10 % (primes non mensuelles)', max_digits=12, decimal_places=2, default=Decimal('0'))
+    non_taxable = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     net_salary = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     employer_contributions = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     employer_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
@@ -131,6 +171,7 @@ class PayslipLine(models.Model):
     order = models.PositiveIntegerField(default=0)
     code = models.CharField(max_length=10)
     label = models.CharField(max_length=150)
+    label_ar = models.CharField(max_length=150, blank=True)
     kind = models.CharField(max_length=20, choices=Kind.choices)
     base = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     rate = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
@@ -150,7 +191,8 @@ class Document(models.Model):
         COMPANY = 'company', 'Documents entreprise'
         OTHER = 'other', 'Autre'
 
-    # Null employee = a company-wide document every employee can see
+    company = models.ForeignKey(Company, null=True, on_delete=models.CASCADE, related_name='documents')
+    # Null employee = a company-wide document every employee of `company` can see
     # (règlement intérieur, convention, notes de service...).
     employee = models.ForeignKey(User, null=True, blank=True, on_delete=models.CASCADE, related_name='documents')
     category = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)

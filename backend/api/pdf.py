@@ -1,20 +1,48 @@
-"""Payslip PDF rendering (reportlab)."""
+"""Bilingual (French / Arabic) payslip PDF rendering with ReportLab.
+
+Arabic text is reshaped (contextual letter forms) and reordered for right-to-left display
+before drawing, since ReportLab has no shaping engine. DejaVu Sans covers both scripts.
+"""
 import io
 from decimal import Decimal
+from pathlib import Path
 
+import arabic_reshaper
+from bidi.algorithm import get_display
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+FONT_DIR = Path(__file__).resolve().parent / 'fonts'
+FONT, FONT_BOLD = 'SilahSans', 'SilahSans-Bold'
+if FONT not in pdfmetrics.getRegisteredFontNames():
+    pdfmetrics.registerFont(TTFont(FONT, str(FONT_DIR / 'DejaVuSans.ttf')))
+    pdfmetrics.registerFont(TTFont(FONT_BOLD, str(FONT_DIR / 'DejaVuSans-Bold.ttf')))
 
 MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août',
           'septembre', 'octobre', 'novembre', 'décembre']
+# Months as used in Algeria (Syriac-derived names).
+MONTHS_AR = ['جانفي', 'فيفري', 'مارس', 'أفريل', 'ماي', 'جوان', 'جويلية', 'أوت',
+             'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر']
+CONTRACTS = {'cdi': ('CDI', 'عقد غير محدد المدة'), 'cdd': ('CDD', 'عقد محدد المدة'),
+             'intern': ('Stage', 'تربص'), 'other': ('Autre', 'آخر')}
+MARITAL = {'single': ('Célibataire', 'أعزب'), 'married': ('Marié(e)', 'متزوج'),
+           'divorced': ('Divorcé(e)', 'مطلق'), 'widowed': ('Veuf / veuve', 'أرمل')}
+PAYMENT = {'transfer': ('Virement', 'تحويل'), 'cheque': ('Chèque', 'صك'), 'cash': ('Espèces', 'نقدا')}
 
 COFFEE = colors.HexColor('#8a6e5a')
 COFFEE_PALE = colors.HexColor('#f3ede7')
 GREY = colors.HexColor('#6b6560')
 LINE = colors.HexColor('#e2dcd5')
+
+
+def ar(text):
+    return get_display(arabic_reshaper.reshape(text)) if text else ''
 
 
 def fmt(value):
@@ -31,36 +59,56 @@ def month_label(year, month):
 
 def render_payslip(payslip) -> bytes:
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
-                            topMargin=15 * mm, bottomMargin=15 * mm,
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12 * mm, rightMargin=12 * mm,
+                            topMargin=12 * mm, bottomMargin=12 * mm,
                             title=f'Bulletin de paie {month_label(payslip.year, payslip.month)}')
-    small = ParagraphStyle('small', fontName='Helvetica', fontSize=8.5, leading=11, textColor=GREY)
-    normal = ParagraphStyle('normal', fontName='Helvetica', fontSize=9.5, leading=13)
-    title = ParagraphStyle('title', fontName='Helvetica-Bold', fontSize=15, leading=19, textColor=COFFEE)
+    small = ParagraphStyle('small', fontName=FONT, fontSize=7.5, leading=10, textColor=GREY)
+    normal = ParagraphStyle('normal', fontName=FONT, fontSize=8.5, leading=11.5)
+    normal_r = ParagraphStyle('normal_r', parent=normal, alignment=TA_RIGHT)
+    title = ParagraphStyle('title', fontName=FONT_BOLD, fontSize=14, leading=18, textColor=COFFEE)
+    title_r = ParagraphStyle('title_r', parent=title, alignment=TA_RIGHT)
 
     e = payslip.employee
-    c = e.company
-    story = [Paragraph('Bulletin de paie', title),
-             Paragraph(f'Période : {month_label(payslip.year, payslip.month)}', normal),
-             Spacer(1, 6 * mm)]
+    c = payslip.company or e.company
+    period_fr = month_label(payslip.year, payslip.month)
+    period_ar = f'{MONTHS_AR[payslip.month - 1]} {payslip.year}'
 
-    company_lines = [f'<b>{c.name}</b>' if c else '<b>Employeur</b>']
+    head = Table([[Paragraph(f'Bulletin de paie<br/><font size="9" color="#6b6560">{period_fr}</font>', title),
+                   Paragraph(f'{ar("كشف الراتب")}<br/><font size="9" color="#6b6560">{ar(period_ar)}</font>', title_r)]],
+                 colWidths=[93 * mm, 93 * mm])
+    head.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                              ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
+    story = [head, Spacer(1, 5 * mm)]
+
+    company_lines = [f'<b>{c.name} {c.legal_form}</b>' if c else '<b>Employeur</b>']
+    if c and c.name_ar:
+        company_lines.append(ar(c.name_ar))
     if c:
         company_lines += [x for x in [c.address, c.city] if x]
-        ids = [f'{k} {v}' for k, v in [('NIF', c.nif), ('NIS', c.nis), ('CNAS', c.cnas_number)] if v]
-        if ids:
-            company_lines.append(' · '.join(ids))
+        for k, v in [('NIF', c.nif), ('NIS', c.nis), ('RC', c.rc), ('N° employeur CNAS', c.cnas_number)]:
+            if v:
+                company_lines.append(f'{k} : {v}')
+
+    def pair(fr, ar_label, value):
+        return f'{fr} / {ar(ar_label)} : <b>{value or "—"}</b>'
+
+    contract = CONTRACTS.get(e.contract_type, ('', ''))
+    marital = MARITAL.get(e.marital_status, ('', ''))
     employee_lines = [f'<b>{e.get_full_name() or e.username}</b>']
     employee_lines += [x for x in [e.address, e.city] if x]
-    employee_lines.append(f'Matricule : {e.employee_number or "—"}')
-    employee_lines.append(f'N° SS : {e.social_security_number or "—"}')
-    employee_lines.append(f'Poste : {payslip.job_title or "—"}')
-    if payslip.department:
-        employee_lines.append(f'Service : {payslip.department}')
+    employee_lines += [
+        pair('Matricule', 'الرقم', e.employee_number),
+        pair('N° SS', 'رقم الضمان الاجتماعي', e.social_security_number),
+        pair('NIN', 'رقم التعريف الوطني', e.nin),
+        pair('Poste', 'المنصب', payslip.job_title),
+        pair('Catégorie', 'الصنف', payslip.qualification),
+        pair('Entrée', 'تاريخ التوظيف', e.hire_date.strftime('%d/%m/%Y') if e.hire_date else ''),
+        pair('Contrat', 'العقد', contract[0]),
+        pair('Situation', 'الحالة العائلية', f'{marital[0]}, {e.children_count} enf.'),
+    ]
 
     header = Table([[Paragraph('<br/>'.join(company_lines), normal),
-                     Paragraph('<br/>'.join(employee_lines), normal)]],
-                   colWidths=[90 * mm, 90 * mm])
+                     Paragraph('<br/>'.join(employee_lines), normal)]], colWidths=[86 * mm, 100 * mm])
     header.setStyle(TableStyle([
         ('BOX', (1, 0), (1, 0), 0.6, LINE),
         ('BACKGROUND', (1, 0), (1, 0), COFFEE_PALE),
@@ -68,50 +116,79 @@ def render_payslip(payslip) -> bytes:
         ('LEFTPADDING', (0, 0), (-1, -1), 6), ('TOPPADDING', (0, 0), (-1, -1), 6),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
     ]))
-    story += [header, Spacer(1, 6 * mm)]
+    story += [header, Spacer(1, 5 * mm)]
 
-    rows = [['Code', 'Libellé', 'Base', 'Taux', 'Part salarié', 'Part employeur']]
+    th = ParagraphStyle('th', fontName=FONT_BOLD, fontSize=7.5, leading=9.5, textColor=colors.white)
+    th_r = ParagraphStyle('th_r', parent=th, alignment=TA_RIGHT)
+
+    def head_cell(fr, ar_label, right=False):
+        return Paragraph(f'{fr}<br/>{ar(ar_label)}', th_r if right else th)
+
+    rows = [[head_cell('Code', 'الرمز'), head_cell('Rubrique', 'البيان'), head_cell('Base', 'الأساس', True),
+             head_cell('Taux', 'النسبة', True), head_cell('Gain / Retenue', 'المبلغ', True),
+             head_cell('Part employeur', 'حصة المستخدم', True)]]
     for line in payslip.lines.all():
-        rows.append([line.code, Paragraph(line.label, normal), fmt(line.base),
-                     f'{fmt(line.rate)} %' if line.rate is not None and line.kind == 'contribution' else fmt(line.rate),
-                     fmt(line.employee_amount), fmt(line.employer_amount) if line.employer_amount else ''])
-    table = Table(rows, colWidths=[14 * mm, 66 * mm, 26 * mm, 20 * mm, 27 * mm, 27 * mm], repeatRows=1)
+        label = line.label + (f'<br/><font color="#6b6560">{ar(line.label_ar)}</font>' if line.label_ar else '')
+        if line.code == 'R100':
+            base, rate = f'{fmt(line.base)} h', fmt(line.rate)
+        elif line.kind == 'deduction':
+            base, rate = f'{fmt(line.base)} j', fmt(line.rate)
+        else:
+            base = fmt(line.base)
+            rate = f'{fmt(line.rate)} %' if line.rate is not None else ''
+        rows.append([line.code, Paragraph(label, normal), base, rate, fmt(line.employee_amount),
+                     fmt(line.employer_amount) if line.employer_amount else ''])
+    table = Table(rows, colWidths=[13 * mm, 73 * mm, 26 * mm, 18 * mm, 28 * mm, 28 * mm], repeatRows=1)
     table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('FONTNAME', (0, 0), (-1, -1), FONT),
+        ('FONTSIZE', (0, 1), (-1, -1), 8.5),
         ('BACKGROUND', (0, 0), (-1, 0), COFFEE),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+        ('ALIGN', (2, 1), (-1, -1), 'RIGHT'),
         ('LINEBELOW', (0, 1), (-1, -1), 0.4, LINE),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
-    story += [table, Spacer(1, 6 * mm)]
+    story += [table, Spacer(1, 5 * mm)]
+
+    def total_row(fr, ar_label, value):
+        return [Paragraph(f'{fr} <font color="#6b6560">/ {ar(ar_label)}</font>', normal), fmt(value)]
 
     totals = [
-        ['Salaire brut', fmt(payslip.gross_salary)],
-        ['Cotisations salariales', fmt(-payslip.social_contributions)],
-        ['Salaire imposable', fmt(payslip.taxable_salary)],
-        ['IRG retenu', fmt(-payslip.income_tax)],
-        ['Net à payer (DZD)', fmt(payslip.net_salary)],
+        total_row('Salaire brut', 'الأجر الخام', payslip.gross_salary),
+        total_row('Cotisations CNAS', 'اشتراكات الضمان الاجتماعي', -payslip.social_contributions),
+        total_row('Salaire imposable', 'الأجر الخاضع للضريبة', payslip.taxable_salary),
+        total_row('IRG retenu', 'الضريبة المقتطعة', -(payslip.income_tax + payslip.flat_tax)),
     ]
-    tt = Table(totals, colWidths=[60 * mm, 35 * mm], hAlign='RIGHT')
+    if payslip.non_taxable:
+        totals.append(total_row('Indemnités non soumises', 'تعويضات غير خاضعة', payslip.non_taxable))
+    totals.append([Paragraph(f'<b>Net à payer (DA)</b> / <b>{ar("الصافي للدفع")}</b>', normal),
+                   fmt(payslip.net_salary)])
+    tt = Table(totals, colWidths=[78 * mm, 32 * mm], hAlign='RIGHT')
     tt.setStyle(TableStyle([
-        ('FONTSIZE', (0, 0), (-1, -1), 9.5),
+        ('FONTNAME', (0, 0), (-1, -1), FONT),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
         ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LINEBELOW', (0, 0), (-1, -2), 0.4, LINE),
-        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, -1), (-1, -1), 11),
+        ('FONTNAME', (1, -1), (1, -1), FONT_BOLD),
+        ('FONTSIZE', (1, -1), (1, -1), 11),
         ('BACKGROUND', (0, -1), (-1, -1), COFFEE_PALE),
         ('TOPPADDING', (0, -1), (-1, -1), 6), ('BOTTOMPADDING', (0, -1), (-1, -1), 6),
     ]))
     story += [tt, Spacer(1, 4 * mm)]
+
+    pay = PAYMENT.get(e.payment_method, ('', ''))
+    absences = f'Absences non rémunérées : {payslip.unpaid_days.normalize()} j · ' if payslip.unpaid_days else ''
     story.append(Paragraph(
-        f'Coût total employeur : {fmt(payslip.employer_cost)} DZD · '
-        f'Jours travaillés : {fmt(payslip.worked_days)} · Absences non rémunérées : {fmt(payslip.unpaid_days)} j', small))
-    if e.iban:
-        story.append(Paragraph(f'Paiement par virement — {e.bank_name or "Banque"} · {e.iban}', small))
-    story += [Spacer(1, 8 * mm), Paragraph(
-        'Document généré par SILAH. Conservez ce bulletin sans limitation de durée.', small)]
+        f'Jours travaillés / {ar("أيام العمل")} : {payslip.worked_days.normalize()} · '
+        f'Heures / {ar("الساعات")} : {fmt(payslip.worked_hours)} · {absences}'
+        f'Coût employeur / {ar("تكلفة المستخدم")} : {fmt(payslip.employer_cost)}&nbsp;DA', small))
+    payment = f'Mode de paiement / {ar("طريقة الدفع")} : {pay[0]}'
+    if e.payment_method == 'transfer' and e.iban:
+        payment += f' — {e.bank_name or "Banque"} {e.iban}'
+    story.append(Paragraph(payment, small))
+    story += [Spacer(1, 6 * mm), Paragraph(
+        'Document généré par SILAH. Conservez ce bulletin sans limitation de durée. / '
+        + ar('احتفظ بكشف الراتب هذا دون تحديد المدة.'), small)]
 
     doc.build(story)
     return buf.getvalue()

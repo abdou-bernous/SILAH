@@ -12,6 +12,8 @@ router.register('leaves', views.LeaveRequestViewSet, basename='leave')
 router.register('expenses', views.ExpenseViewSet, basename='expense')
 router.register('profile-requests', views.ProfileChangeRequestViewSet, basename='profile-request')
 router.register('notifications', views.NotificationViewSet, basename='notification')
+router.register('companies', views.CompanyViewSet, basename='company-admin')
+router.register('platform/users', views.PlatformUserViewSet, basename='platform-user')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -22,4 +24,5 @@ urlpatterns = [
     path('auth/change-password/', views.ChangePasswordView.as_view(), name='change-password'),
     path('company/', views.CompanyView.as_view(), name='company'),
     path('dashboard/', views.DashboardView.as_view(), name='dashboard'),
+    path('platform/stats/', views.PlatformStatsView.as_view(), name='platform-stats'),
 ]

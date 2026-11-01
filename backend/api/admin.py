@@ -13,9 +13,10 @@ class SilahUserAdmin(UserAdmin):
     list_filter = ['role', 'is_active', 'department']
     fieldsets = UserAdmin.fieldsets + (
         ('Dossier salarié', {'fields': (
-            'company', 'role', 'manager', 'employee_number', 'job_title', 'department', 'contract_type',
-            'hire_date', 'birth_date', 'social_security_number', 'phone', 'address', 'city', 'postal_code',
-            'emergency_contact', 'bank_name', 'iban', 'base_salary')}),
+            'company', 'role', 'manager', 'employee_number', 'job_title', 'department', 'qualification',
+            'contract_type', 'hire_date', 'birth_date', 'social_security_number', 'nin', 'marital_status',
+            'children_count', 'is_disabled', 'phone', 'address', 'city', 'postal_code', 'emergency_contact',
+            'bank_name', 'iban', 'payment_method', 'base_salary')}),
     )
 
 
@@ -43,4 +44,11 @@ class ExpenseReportAdmin(admin.ModelAdmin):
     list_filter = ['status', 'category']
 
 
-admin.site.register([Company, Document, LeaveBalance, ProfileChangeRequest, Notification])
+@admin.register(Company)
+class CompanyAdmin(admin.ModelAdmin):
+    list_display = ['name', 'city', 'nif', 'is_active']
+    list_filter = ['is_active']
+    filter_horizontal = ['managers']
+
+
+admin.site.register([Document, LeaveBalance, ProfileChangeRequest, Notification])
