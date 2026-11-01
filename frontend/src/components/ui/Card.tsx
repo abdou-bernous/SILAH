@@ -1,3 +1,6 @@
+'use client'
+import { useI18n } from '@/lib/i18n'
+
 export default function Card({ children, className = '', title, action }: {
   children: React.ReactNode
   className?: string
@@ -39,11 +42,12 @@ export function EmptyState({ icon, title, children }: { icon?: React.ReactNode; 
   )
 }
 
-export function Spinner({ label = 'Chargement…' }: { label?: string }) {
+export function Spinner({ label }: { label?: string }) {
+  const { t } = useI18n()
   return (
     <div className="flex items-center justify-center gap-3 py-12 text-sm text-muted">
       <span className="h-4 w-4 animate-spin rounded-full border-2 border-latte border-t-coffee" />
-      {label}
+      {label || t('common.loading')}
     </div>
   )
 }

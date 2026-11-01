@@ -5,9 +5,27 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8100
 
 const api = axios.create({ baseURL: API_URL })
 
+export const COMPANY_KEY = 'silah_company'
+
+export function getActiveCompany(): string | null {
+  try { return typeof window !== 'undefined' ? localStorage.getItem(COMPANY_KEY) : null } catch { return null }
+}
+
+export function setActiveCompany(id: number | string | null) {
+  try {
+    if (id === null) localStorage.removeItem(COMPANY_KEY)
+    else localStorage.setItem(COMPANY_KEY, String(id))
+  } catch { /* storage unavailable */ }
+}
+
 api.interceptors.request.use((config) => {
   const token = Cookies.get('access_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+  // Accountants and the platform admin work on one company at a time; the API ignores
+  // this header for everyone else and never lets it reach a company they don't manage.
+  const company = getActiveCompany()
+  if (company) config.headers['X-Company'] = company
+  if (typeof document !== 'undefined') config.headers['Accept-Language'] = document.documentElement.lang || 'fr'
   return config
 })
 
@@ -44,7 +62,9 @@ api.interceptors.response.use(
 )
 
 /** Turn a DRF error payload into one readable French sentence. */
-export function errorMessage(err: unknown, fallback = 'Une erreur est survenue.'): string {
+export function errorMessage(err: unknown, fallback = ''): string {
+  fallback = fallback || (typeof document !== 'undefined' && document.documentElement.lang === 'ar'
+    ? 'حدث خطأ.' : 'Une erreur est survenue.')
   const data = (err as { response?: { data?: unknown } })?.response?.data
   if (!data) return fallback
   if (typeof data === 'string') return data.length < 300 ? data : fallback

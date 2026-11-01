@@ -1,6 +1,7 @@
 'use client'
 import { useEffect } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
+import { useI18n } from '@/lib/i18n'
 
 export default function Modal({ open, onClose, title, children, wide }: {
   open: boolean
@@ -9,6 +10,7 @@ export default function Modal({ open, onClose, title, children, wide }: {
   children: React.ReactNode
   wide?: boolean
 }) {
+  const { t } = useI18n()
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
@@ -24,7 +26,7 @@ export default function Modal({ open, onClose, title, children, wide }: {
         className={`max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:rounded-2xl ${wide ? 'sm:max-w-2xl' : 'sm:max-w-lg'}`}>
         <div className="sticky top-0 flex items-center justify-between border-b border-stone bg-white px-5 py-4">
           <h2 className="text-base font-semibold">{title}</h2>
-          <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-sand" aria-label="Fermer">
+          <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-sand" aria-label={t('common.close')}>
             <XMarkIcon className="h-5 w-5" />
           </button>
         </div>

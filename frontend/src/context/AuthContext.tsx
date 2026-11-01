@@ -1,6 +1,6 @@
 'use client'
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react'
-import api from '@/lib/api'
+import api, { getActiveCompany, setActiveCompany } from '@/lib/api'
 import { logout as authLogout, isLoggedIn } from '@/lib/auth'
 import type { User } from '@/lib/types'
 
@@ -29,7 +29,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     if (!isLoggedIn()) { setUser(null); setLoading(false); return }
     try {
-      const { data } = await api.get('/auth/me/')
+      const { data } = await api.get<User>('/auth/me/')
+      // Users managing several companies (accountant, admin) work on one at a time: make sure a
+      // valid one is selected before any page fetches company-scoped data.
+      if (!data.company && data.companies.length) {
+        const saved = getActiveCompany()
+        if (!saved || !data.companies.some((c) => String(c.id) === saved)) setActiveCompany(data.companies[0].id)
+      }
       setUser(data)
       refreshUnread()
     } catch {

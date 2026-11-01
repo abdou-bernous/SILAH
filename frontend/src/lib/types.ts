@@ -1,10 +1,15 @@
-export type Role = 'employee' | 'manager' | 'hr'
+export type Role = 'employee' | 'manager' | 'hr' | 'accountant' | 'admin'
 export type RequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'paid'
 
 export interface Company {
   id: number
   name: string
+  name_ar: string
   legal_form: string
+  sector: string
+  phone: string
+  email: string
+  is_active: boolean
   address: string
   city: string
   nif: string
@@ -34,13 +39,18 @@ export interface User {
   full_name: string
   role: Role
   is_hr: boolean
+  is_platform_admin: boolean
   employee_number: string
   job_title: string
   department: string
+  qualification: string
   contract_type: string
   hire_date: string | null
   birth_date: string | null
   social_security_number: string
+  nin: string
+  marital_status: string
+  children_count: number
   phone: string
   address: string
   city: string
@@ -48,13 +58,16 @@ export interface User {
   emergency_contact: string
   bank_name: string
   iban: string
+  payment_method: string
   manager: UserLite | null
   company: Company | null
   team_size: number
+  companies: { id: number; name: string }[]
 }
 
-export interface Employee extends Omit<User, 'manager' | 'company' | 'is_hr' | 'team_size'> {
+export interface Employee extends Omit<User, 'manager' | 'company' | 'is_hr' | 'is_platform_admin' | 'team_size' | 'companies'> {
   is_active: boolean
+  is_disabled: boolean
   base_salary: string
   manager: number | null
   manager_name: string | null
@@ -77,6 +90,7 @@ export interface PayslipSummary {
 export interface PayslipLine {
   code: string
   label: string
+  label_ar: string
   kind: 'earning' | 'deduction' | 'contribution' | 'tax' | 'non_taxable'
   base: string | null
   rate: string | null
@@ -90,21 +104,29 @@ export interface PayslipDetail extends Omit<PayslipSummary, 'employee'> {
     full_name: string
     employee_number: string
     social_security_number: string
+    nin: string
     hire_date: string | null
     contract_type: string
     address: string
     city: string
     iban: string
     bank_name: string
+    marital_status: string
+    children_count: number
+    payment_method: string
   }
   company: Company | null
   job_title: string
   department: string
+  qualification: string
   worked_days: string
+  worked_hours: string
   unpaid_days: string
   social_contributions: string
   taxable_salary: string
   income_tax: string
+  flat_tax: string
+  non_taxable: string
   employer_contributions: string
   lines: PayslipLine[]
 }
@@ -195,4 +217,54 @@ export interface Notification {
 export interface Choice {
   value: string
   label: string
+}
+
+export interface PayrollTotals {
+  gross: string | null
+  net: string | null
+  cost: string | null
+  irg: string | null
+  irg_flat: string | null
+  cnas: string | null
+  cnas_employer: string | null
+  count: number
+}
+
+export interface CompanyAdmin extends Company {
+  employee_count: number
+  managers: { id: number; full_name: string }[]
+  created_at: string
+}
+
+export interface CompanyOverview extends CompanyAdmin {
+  last_payroll: (PayrollTotals & { year: number; month: number }) | null
+  drafts: number
+  pending_leaves: number
+  pending_expenses: number
+  pending_profile: number
+  absent_today: number
+}
+
+export interface PlatformUser {
+  id: number
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  full_name: string
+  role: 'accountant' | 'admin'
+  phone: string
+  is_active: boolean
+  companies: number[]
+  last_login: string | null
+  date_joined: string
+  password?: string
+}
+
+export interface Preset {
+  key: string
+  label: string
+  label_ar: string
+  contributory: boolean
+  tax: 'scale' | 'flat' | 'exempt'
 }

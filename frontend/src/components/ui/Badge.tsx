@@ -1,3 +1,6 @@
+'use client'
+import { useI18n } from '@/lib/i18n'
+
 type Tone = 'sage' | 'honey' | 'rose' | 'mist' | 'neutral' | 'coffee'
 
 const tones: Record<Tone, string> = {
@@ -17,17 +20,12 @@ export default function Badge({ children, tone = 'neutral' }: { children: React.
   )
 }
 
-const STATUS: Record<string, { tone: Tone; label: string }> = {
-  pending: { tone: 'honey', label: 'En attente' },
-  approved: { tone: 'sage', label: 'Validée' },
-  rejected: { tone: 'rose', label: 'Refusée' },
-  cancelled: { tone: 'neutral', label: 'Annulée' },
-  paid: { tone: 'mist', label: 'Remboursée' },
-  draft: { tone: 'honey', label: 'Brouillon' },
-  published: { tone: 'sage', label: 'Publié' },
+const STATUS_TONES: Record<string, Tone> = {
+  pending: 'honey', approved: 'sage', rejected: 'rose', cancelled: 'neutral', paid: 'mist',
+  draft: 'honey', published: 'sage',
 }
 
-export function StatusBadge({ status, label }: { status: string; label?: string }) {
-  const s = STATUS[status] || { tone: 'neutral' as Tone, label: status }
-  return <Badge tone={s.tone}>{label || s.label}</Badge>
+export function StatusBadge({ status }: { status: string }) {
+  const { tx } = useI18n()
+  return <Badge tone={STATUS_TONES[status] || 'neutral'}>{tx(`status.${status}`, status)}</Badge>
 }

@@ -2,7 +2,8 @@
 import { useState } from 'react'
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
 import { useFetch } from '@/lib/useFetch'
-import { isoDate, monthLabel } from '@/lib/format'
+import { isoDate, monthLabel, WEEKDAY_INITIALS } from '@/lib/format'
+import { useI18n } from '@/lib/i18n'
 import { Spinner } from './ui/Card'
 
 interface CalendarData {
@@ -18,6 +19,7 @@ const TYPE_COLORS: Record<string, string> = {
 }
 
 export default function TeamCalendar() {
+  const { t, tx, locale } = useI18n()
   const now = new Date()
   const [ym, setYm] = useState({ y: now.getFullYear(), m: now.getMonth() + 1 })
   const { data, loading } = useFetch<CalendarData>(`/leaves/calendar/?year=${ym.y}&month=${ym.m}`)
@@ -35,19 +37,19 @@ export default function TeamCalendar() {
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center justify-between border-b border-stone px-5 py-3">
-        <button onClick={() => move(-1)} className="rounded-lg p-1.5 text-muted hover:bg-sand" aria-label="Mois précédent"><ChevronLeftIcon className="h-4 w-4" /></button>
+        <button onClick={() => move(-1)} className="rounded-lg p-1.5 text-muted hover:bg-sand" aria-label={t('cal.prev')}><ChevronLeftIcon className="h-4 w-4 rtl:rotate-180" /></button>
         <p className="text-sm font-semibold">{monthLabel(ym.y, ym.m)}</p>
-        <button onClick={() => move(1)} className="rounded-lg p-1.5 text-muted hover:bg-sand" aria-label="Mois suivant"><ChevronRightIcon className="h-4 w-4" /></button>
+        <button onClick={() => move(1)} className="rounded-lg p-1.5 text-muted hover:bg-sand" aria-label={t('cal.next')}><ChevronRightIcon className="h-4 w-4 rtl:rotate-180" /></button>
       </div>
       {loading || !data ? <Spinner /> : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-xs">
             <thead>
               <tr>
-                <th className="sticky left-0 z-10 min-w-40 bg-white px-4 py-2 text-left font-medium text-muted">Collaborateur</th>
+                <th className="sticky start-0 z-10 min-w-40 bg-white px-4 py-2 text-start font-medium text-muted">{t('cal.person')}</th>
                 {days.map((d) => (
                   <th key={d.getDate()} className={`w-7 min-w-7 py-2 text-center font-normal ${isWeekend(d) ? 'bg-sand/60 text-muted/70' : 'text-muted'} ${isoDate(d) === today ? 'text-coffee font-semibold' : ''}`}>
-                    <div>{'DLMMJVS'[d.getDay()]}</div>
+                    <div>{WEEKDAY_INITIALS[locale][d.getDay()]}</div>
                     <div>{d.getDate()}</div>
                   </th>
                 ))}
@@ -56,7 +58,7 @@ export default function TeamCalendar() {
             <tbody>
               {data.people.map((p) => (
                 <tr key={p.id} className="border-t border-stone">
-                  <td className="sticky left-0 z-10 bg-white px-4 py-2">
+                  <td className="sticky start-0 z-10 bg-white px-4 py-2">
                     <p className="font-medium text-espresso">{p.full_name}</p>
                     <p className="text-[11px] text-muted">{p.job_title}</p>
                   </td>
@@ -67,7 +69,7 @@ export default function TeamCalendar() {
                     return (
                       <td key={iso} className={`h-10 p-0.5 ${weekend ? 'bg-sand/60' : ''}`}>
                         {leave && !weekend && (
-                          <div title={`${leave.label}${leave.status === 'pending' ? ' (en attente)' : ''}`}
+                          <div title={`${leave.leave_type ? tx(`leaveType.${leave.leave_type}`, leave.label) : t('cal.absent')}${leave.status === 'pending' ? ` (${t('status.pending')})` : ''}`}
                             className={`h-6 rounded ${leave.leave_type ? TYPE_COLORS[leave.leave_type] || 'bg-coffee' : 'bg-muted/50'} ${leave.status === 'pending' ? 'opacity-40' : ''}`} />
                         )}
                       </td>
@@ -78,11 +80,11 @@ export default function TeamCalendar() {
             </tbody>
           </table>
           <div className="flex flex-wrap gap-4 border-t border-stone px-5 py-3 text-xs text-muted">
-            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-coffee" /> Congé annuel</span>
-            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-latte" /> Récupération</span>
-            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-rose-ink/70" /> Maladie</span>
-            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-muted/50" /> Absent</span>
-            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-coffee opacity-40" /> En attente</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-coffee" /> {t('leaveType.annual')}</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-latte" /> {t('leaveType.recovery')}</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-rose-ink/70" /> {t('leaveType.sick')}</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-muted/50" /> {t('cal.absent')}</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-coffee opacity-40" /> {t('status.pending')}</span>
           </div>
         </div>
       )}

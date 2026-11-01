@@ -16,7 +16,7 @@ export function useFetch<T>(url: string | null) {
       setData(r.data)
       setError('')
     } catch (e) {
-      setError(errorMessage(e, 'Impossible de charger les données.'))
+      setError(errorMessage(e))
     } finally {
       setLoading(false)
     }

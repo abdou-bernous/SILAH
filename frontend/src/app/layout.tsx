@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { AuthProvider } from '@/context/AuthContext'
+import { I18nProvider } from '@/lib/i18n'
 
 export const metadata: Metadata = {
   title: { default: 'SILAH — Portail paie & RH', template: '%s | SILAH' },
@@ -12,7 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="fr">
       <body className="min-h-screen">
-        <AuthProvider>{children}</AuthProvider>
+        <I18nProvider><AuthProvider>{children}</AuthProvider></I18nProvider>
       </body>
     </html>
   )

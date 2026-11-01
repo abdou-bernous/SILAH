@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import { ArrowDownTrayIcon, BuildingOfficeIcon, DocumentTextIcon, FolderIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { useFetch } from '@/lib/useFetch'
+import { useI18n } from '@/lib/i18n'
 import { downloadFile } from '@/lib/api'
 import { date, fileSize } from '@/lib/format'
 import type { Choice, DocumentItem } from '@/lib/types'
@@ -9,6 +10,7 @@ import Card, { EmptyState, PageHeader, Spinner } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 
 export default function DocumentsPage() {
+  const { t, tx } = useI18n()
   const { data, loading, reload } = useFetch<DocumentItem[]>('/documents/')
   const { data: categories } = useFetch<Choice[]>('/documents/categories/')
   const [category, setCategory] = useState('')
@@ -30,17 +32,17 @@ export default function DocumentsPage() {
 
   return (
     <div>
-      <PageHeader title="Mes documents" subtitle="Votre coffre-fort numérique : contrats, attestations et documents de l'entreprise." />
+      <PageHeader title={t('docs.title')} subtitle={t('docs.subtitle')} />
       <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
         <nav className="flex gap-2 overflow-x-auto lg:flex-col lg:gap-1">
           <button onClick={() => setCategory('')}
             className={`flex shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm ${!category ? 'bg-white font-medium shadow-sm' : 'text-muted hover:bg-white/60'}`}>
-            Tous les documents <span className="text-xs text-muted">{data?.length ?? ''}</span>
+            {t('docs.all')} <span className="text-xs text-muted">{data?.length ?? ''}</span>
           </button>
           {categories?.filter((c) => counts[c.value]).map((c) => (
             <button key={c.value} onClick={() => setCategory(c.value)}
               className={`flex shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm ${category === c.value ? 'bg-white font-medium shadow-sm' : 'text-muted hover:bg-white/60'}`}>
-              {c.label} <span className="text-xs text-muted">{counts[c.value]}</span>
+              {tx(`docCat.${c.value}`, c.label)} <span className="text-xs text-muted">{counts[c.value]}</span>
             </button>
           ))}
         </nav>
@@ -48,12 +50,12 @@ export default function DocumentsPage() {
         <Card>
           <div className="border-b border-stone p-3">
             <div className="relative">
-              <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted" />
-              <input className="input pl-9" placeholder="Rechercher un document" value={q} onChange={(e) => setQ(e.target.value)} />
+              <MagnifyingGlassIcon className="pointer-events-none absolute start-3 top-2.5 h-4 w-4 text-muted" />
+              <input className="input ps-9" placeholder={t('docs.search')} value={q} onChange={(e) => setQ(e.target.value)} />
             </div>
           </div>
           {loading ? <Spinner /> : filtered.length === 0 ? (
-            <EmptyState icon={<FolderIcon />} title="Aucun document">Les documents déposés par votre service RH apparaîtront ici.</EmptyState>
+            <EmptyState icon={<FolderIcon />} title={t('docs.empty')}>{t('docs.emptyHint')}</EmptyState>
           ) : (
             <ul className="divide-y divide-stone">
               {filtered.map((d) => (
@@ -64,16 +66,16 @@ export default function DocumentsPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">
                       {d.title}
-                      {d.employee && !d.viewed_at && <span className="ml-2"><Badge tone="coffee">Nouveau</Badge></span>}
+                      {d.employee && !d.viewed_at && <span className="ms-2"><Badge tone="coffee">{t('common.new')}</Badge></span>}
                     </p>
                     <p className="truncate text-xs text-muted">
-                      {d.category_label} · {date(d.created_at)}{d.file_size ? ` · ${fileSize(d.file_size)}` : ''}
-                      {!d.employee && ' · Document entreprise'}
+                      {tx(`docCat.${d.category}`, d.category_label)} · {date(d.created_at)}{d.file_size ? ` · ${fileSize(d.file_size)}` : ''}
+                      {!d.employee && ` · ${t('docs.companyDoc')}`}
                     </p>
                     {d.description && <p className="mt-0.5 truncate text-xs text-muted">{d.description}</p>}
                   </div>
                   <button onClick={() => download(d)}
-                    className="rounded-lg p-2 text-muted hover:bg-sand hover:text-coffee" aria-label={`Télécharger ${d.title}`}>
+                    className="rounded-lg p-2 text-muted hover:bg-sand hover:text-coffee" aria-label={`${t('common.download')} ${d.title}`}>
                     <ArrowDownTrayIcon className="h-5 w-5" />
                   </button>
                 </li>

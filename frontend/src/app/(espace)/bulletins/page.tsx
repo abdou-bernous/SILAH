@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowDownTrayIcon, BanknotesIcon, EyeIcon } from '@heroicons/react/24/outline'
 import { useFetch } from '@/lib/useFetch'
+import { useI18n } from '@/lib/i18n'
 import { downloadFile } from '@/lib/api'
 import { date, money, monthLabel } from '@/lib/format'
 import type { PayslipSummary } from '@/lib/types'
@@ -10,6 +11,7 @@ import Card, { EmptyState, PageHeader, Spinner, Stat } from '@/components/ui/Car
 import Badge from '@/components/ui/Badge'
 
 export default function PayslipsPage() {
+  const { t } = useI18n()
   const { data: years } = useFetch<number[]>('/payslips/years/')
   const [year, setYear] = useState<number | null>(null)
   useEffect(() => { if (years && years.length && year === null) setYear(years[0]) }, [years, year])
@@ -20,7 +22,7 @@ export default function PayslipsPage() {
 
   return (
     <div>
-      <PageHeader title="Mes bulletins de paie" subtitle="Vos bulletins sont conservés sans limite de durée et restent accessibles à tout moment."
+      <PageHeader title={t('payslips.title')} subtitle={t('payslips.subtitle')}
         actions={years && years.length > 0 && (
           <div className="flex rounded-lg border border-stone bg-white p-1">
             {years.map((y) => (
@@ -34,16 +36,16 @@ export default function PayslipsPage() {
 
       {data && data.length > 0 && (
         <div className="card mb-6 grid gap-6 p-5 sm:grid-cols-3">
-          <Stat label={`Net cumulé ${year ?? ''}`} value={money(totalNet)} />
-          <Stat label="Brut cumulé" value={money(totalGross)} />
-          <Stat label="Bulletins" value={data.length} />
+          <Stat label={t('payslips.netYtd', { year: year ?? '' })} value={money(totalNet)} />
+          <Stat label={t('payslips.grossYtd')} value={money(totalGross)} />
+          <Stat label={t('payslips.count')} value={data.length} />
         </div>
       )}
 
       <Card>
         {loading || (!data && years === null) ? <Spinner /> : !data || data.length === 0 ? (
-          <EmptyState icon={<BanknotesIcon />} title="Aucun bulletin disponible">
-            Votre service RH vous préviendra dès la publication de votre premier bulletin.
+          <EmptyState icon={<BanknotesIcon />} title={t('payslips.empty')}>
+            {t('payslips.emptyHint')}
           </EmptyState>
         ) : (
           <ul className="divide-y divide-stone">
@@ -55,20 +57,20 @@ export default function PayslipsPage() {
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">
                     {monthLabel(p.year, p.month)}
-                    {!p.viewed_at && <span className="ml-2"><Badge tone="coffee">Nouveau</Badge></span>}
+                    {!p.viewed_at && <span className="ms-2"><Badge tone="coffee">{t('common.new')}</Badge></span>}
                   </p>
-                  <p className="text-xs text-muted">Publié le {date(p.published_at)}</p>
+                  <p className="text-xs text-muted">{t('payslips.publishedOn', { date: date(p.published_at) })}</p>
                 </div>
-                <div className="text-right">
+                <div className="text-end">
                   <p className="font-semibold">{money(p.net_salary)}</p>
-                  <p className="text-xs text-muted">Brut {money(p.gross_salary)}</p>
+                  <p className="text-xs text-muted">{t('payslips.gross', { amount: money(p.gross_salary) })}</p>
                 </div>
                 <div className="flex gap-1">
-                  <Link href={`/bulletins/${p.id}`} className="rounded-lg p-2 text-muted hover:bg-sand hover:text-coffee" aria-label="Consulter">
+                  <Link href={`/bulletins/${p.id}`} className="rounded-lg p-2 text-muted hover:bg-sand hover:text-coffee" aria-label={t('common.view')}>
                     <EyeIcon className="h-5 w-5" />
                   </Link>
                   <button onClick={() => downloadFile(`/payslips/${p.id}/pdf/`, 'bulletin.pdf')}
-                    className="rounded-lg p-2 text-muted hover:bg-sand hover:text-coffee" aria-label="Télécharger en PDF">
+                    className="rounded-lg p-2 text-muted hover:bg-sand hover:text-coffee" aria-label={t('common.downloadPdf')}>
                     <ArrowDownTrayIcon className="h-5 w-5" />
                   </button>
                 </div>

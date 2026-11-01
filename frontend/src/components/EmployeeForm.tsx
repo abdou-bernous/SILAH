@@ -3,17 +3,23 @@ import { useState } from 'react'
 import api, { errorMessage } from '@/lib/api'
 import type { Employee } from '@/lib/types'
 import { useFetch } from '@/lib/useFetch'
+import { useI18n, type TKey } from '@/lib/i18n'
+import { money } from '@/lib/format'
 import Button from './ui/Button'
 import Field from './ui/Field'
 import { Alert } from './ui/Card'
 
 type Dir = { id: number; full_name: string }[]
 
+// Salaire national minimum garanti (décret présidentiel 2024).
+const SNMG = 24000
+
 const BLANK: Partial<Employee> = {
   username: '', email: '', first_name: '', last_name: '', role: 'employee', is_active: true, employee_number: '',
-  job_title: '', department: '', contract_type: 'cdi', hire_date: null, birth_date: null, social_security_number: '',
-  phone: '', address: '', city: '', postal_code: '', emergency_contact: '', bank_name: '', iban: '', base_salary: '0',
-  manager: null, password: '',
+  job_title: '', department: '', qualification: '', contract_type: 'cdi', hire_date: null, birth_date: null,
+  social_security_number: '', nin: '', marital_status: 'single', children_count: 0, is_disabled: false,
+  payment_method: 'transfer', phone: '', address: '', city: '', postal_code: '', emergency_contact: '',
+  bank_name: '', iban: '', base_salary: '0', manager: null, password: '',
 }
 
 export default function EmployeeForm({ initial, onSaved, onCancel }: {
@@ -21,6 +27,7 @@ export default function EmployeeForm({ initial, onSaved, onCancel }: {
   onSaved: (e: Employee) => void
   onCancel?: () => void
 }) {
+  const { t } = useI18n()
   const [form, setForm] = useState<Partial<Employee>>(initial ? { ...initial, password: '' } : BLANK)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -36,6 +43,7 @@ export default function EmployeeForm({ initial, onSaved, onCancel }: {
     const payload: Record<string, unknown> = { ...form }
     for (const k of ['hire_date', 'birth_date']) if (!payload[k]) payload[k] = null
     if (!payload.manager) payload.manager = null
+    payload.children_count = Number(payload.children_count) || 0
     if (initial && !payload.password) delete payload.password
     delete payload.full_name
     delete payload.manager_name
@@ -49,67 +57,93 @@ export default function EmployeeForm({ initial, onSaved, onCancel }: {
     }
   }
 
-  const text = (k: keyof Employee, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}, className = '') => (
-    <Field label={label} className={className}>
-      <input className="input" value={(form[k] as string) ?? ''} onChange={set(k)} {...props} />
+  const text = (k: keyof Employee, label: TKey, props: React.InputHTMLAttributes<HTMLInputElement> = {}, className = '') => (
+    <Field label={t(label)} className={className}>
+      <input className="input" value={(form[k] as string | number) ?? ''} onChange={set(k)} {...props} />
     </Field>
   )
+  const ltr = { dir: 'ltr' as const, className: 'input text-start' }
+  const salary = Number(form.base_salary || 0)
 
   return (
     <form onSubmit={submit} className="space-y-6">
       {error && <Alert>{error}</Alert>}
       <fieldset className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <legend className="mb-3 text-sm font-semibold">Identité & accès</legend>
-        {text('last_name', 'Nom', { required: true })}
-        {text('first_name', 'Prénom', { required: true })}
-        {text('email', 'E-mail', { type: 'email' })}
-        {text('username', 'Identifiant de connexion', { required: true })}
-        {text('password', initial ? 'Nouveau mot de passe' : 'Mot de passe initial', { type: 'password', required: !initial, autoComplete: 'new-password', placeholder: initial ? 'Laisser vide pour ne pas changer' : '' })}
-        <Field label="Rôle">
+        <legend className="mb-3 text-sm font-semibold">{t('emp.form.identity')}</legend>
+        {text('last_name', 'field.last_name', { required: true })}
+        {text('first_name', 'field.first_name', { required: true })}
+        {text('email', 'field.email', { type: 'email', ...ltr })}
+        {text('username', 'field.username', { required: true, ...ltr })}
+        {text('password', initial ? 'emp.form.newPassword' : 'emp.form.initialPassword', {
+          type: 'password', required: !initial, autoComplete: 'new-password',
+          placeholder: initial ? t('emp.form.keepPassword') : '' })}
+        <Field label={t('field.role')}>
           <select className="input" value={form.role} onChange={set('role')}>
-            <option value="employee">Salarié</option>
-            <option value="manager">Manager</option>
-            <option value="hr">Gestionnaire RH</option>
+            <option value="employee">{t('role.employee')}</option>
+            <option value="manager">{t('role.manager')}</option>
+            <option value="hr">{t('role.hr')}</option>
           </select>
         </Field>
       </fieldset>
 
       <fieldset className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <legend className="mb-3 text-sm font-semibold">Contrat</legend>
-        {text('employee_number', 'Matricule')}
-        {text('job_title', 'Poste')}
-        {text('department', 'Service')}
-        <Field label="Type de contrat">
+        <legend className="mb-3 text-sm font-semibold">{t('emp.form.contract')}</legend>
+        {text('employee_number', 'field.employee_number')}
+        {text('job_title', 'field.job_title')}
+        {text('department', 'field.department')}
+        {text('qualification', 'field.qualification', { placeholder: t('emp.form.qualificationHint') })}
+        <Field label={t('field.contract_type')}>
           <select className="input" value={form.contract_type} onChange={set('contract_type')}>
-            <option value="cdi">CDI</option><option value="cdd">CDD</option><option value="intern">Stage</option><option value="other">Autre</option>
+            {(['cdi', 'cdd', 'intern', 'other'] as const).map((c) => <option key={c} value={c}>{t(`contract.${c}`)}</option>)}
           </select>
         </Field>
-        {text('hire_date', "Date d'entrée", { type: 'date' })}
-        <Field label="Manager">
+        {text('hire_date', 'field.hire_date', { type: 'date' })}
+        <Field label={t('field.manager')}>
           <select className="input" value={form.manager ?? ''} onChange={(e) => setForm({ ...form, manager: e.target.value ? Number(e.target.value) : null })}>
-            <option value="">— Aucun —</option>
+            <option value="">{t('common.none')}</option>
             {directory?.filter((d) => d.id !== initial?.id).map((d) => <option key={d.id} value={d.id}>{d.full_name}</option>)}
           </select>
         </Field>
-        {text('base_salary', 'Salaire de base mensuel (DA)', { type: 'number', min: 0, step: '0.01', required: true })}
+        <Field label={t('field.base_salary')}
+          hint={salary > 0 && salary < SNMG
+            ? <span className="text-rose-ink">{t('emp.form.belowSnmg', { snmg: money(SNMG) })}</span>
+            : t('emp.form.snmgHint', { snmg: money(SNMG) })}>
+          <input className="input" type="number" min={0} step="0.01" required value={form.base_salary ?? ''} onChange={set('base_salary')} />
+        </Field>
+        <Field label={t('field.payment_method')}>
+          <select className="input" value={form.payment_method} onChange={set('payment_method')}>
+            {(['transfer', 'cheque', 'cash'] as const).map((c) => <option key={c} value={c}>{t(`payment.${c}`)}</option>)}
+          </select>
+        </Field>
       </fieldset>
 
       <fieldset className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <legend className="mb-3 text-sm font-semibold">Données personnelles</legend>
-        {text('birth_date', 'Date de naissance', { type: 'date' })}
-        {text('social_security_number', 'N° sécurité sociale')}
-        {text('phone', 'Téléphone')}
-        {text('address', 'Adresse', {}, 'sm:col-span-2')}
-        {text('city', 'Ville')}
-        {text('postal_code', 'Code postal')}
-        {text('bank_name', 'Banque')}
-        {text('iban', 'RIB / IBAN')}
-        {text('emergency_contact', "Contact d'urgence", {}, 'sm:col-span-2 lg:col-span-3')}
+        <legend className="mb-3 text-sm font-semibold">{t('emp.form.personal')}</legend>
+        {text('birth_date', 'field.birth_date', { type: 'date' })}
+        {text('social_security_number', 'field.social_security_number', ltr)}
+        {text('nin', 'field.nin', ltr)}
+        <Field label={t('field.marital_status')}>
+          <select className="input" value={form.marital_status} onChange={set('marital_status')}>
+            {(['single', 'married', 'divorced', 'widowed'] as const).map((c) => <option key={c} value={c}>{t(`marital.${c}`)}</option>)}
+          </select>
+        </Field>
+        {text('children_count', 'field.children_count', { type: 'number', min: 0, max: 20 })}
+        <label className="flex items-center gap-2 self-end pb-2 text-sm">
+          <input type="checkbox" checked={!!form.is_disabled} onChange={(e) => setForm({ ...form, is_disabled: e.target.checked })} />
+          {t('field.is_disabled')}
+        </label>
+        {text('phone', 'field.phone', ltr)}
+        {text('address', 'field.address', {}, 'sm:col-span-2')}
+        {text('city', 'field.city')}
+        {text('postal_code', 'field.postal_code')}
+        {text('bank_name', 'field.bank_name')}
+        {text('iban', 'field.iban', ltr)}
+        {text('emergency_contact', 'field.emergency_contact', {}, 'sm:col-span-2 lg:col-span-3')}
       </fieldset>
 
       <div className="flex justify-end gap-2 border-t border-stone pt-4">
-        {onCancel && <Button variant="ghost" onClick={onCancel}>Annuler</Button>}
-        <Button type="submit" disabled={saving}>{saving ? 'Enregistrement…' : initial ? 'Enregistrer' : 'Créer le salarié'}</Button>
+        {onCancel && <Button variant="ghost" onClick={onCancel}>{t('common.cancel')}</Button>}
+        <Button type="submit" disabled={saving}>{saving ? t('common.saving') : initial ? t('common.save') : t('emp.form.create')}</Button>
       </div>
     </form>
   )

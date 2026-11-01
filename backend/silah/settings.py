@@ -120,6 +120,9 @@ CORS_ALLOWED_ORIGINS = config(
 ).split(',')
 # Downloads read the file name from this header, which browsers hide cross-origin by default.
 CORS_EXPOSE_HEADERS = ['Content-Disposition']
+# X-Company: company an accountant / the platform admin is working on.
+from corsheaders.defaults import default_headers  # noqa: E402
+CORS_ALLOW_HEADERS = [*default_headers, 'x-company']
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'

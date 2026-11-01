@@ -11,6 +11,7 @@ export async function login(username: string, password: string): Promise<User> {
 }
 
 export function logout() {
+  try { localStorage.removeItem('silah_company') } catch { /* ignore */ }
   Cookies.remove('access_token')
   Cookies.remove('refresh_token')
 }
