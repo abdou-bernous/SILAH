@@ -8,6 +8,7 @@ import { date, fileSize } from '@/lib/format'
 import type { Choice, DocumentItem } from '@/lib/types'
 import Card, { EmptyState, PageHeader, Spinner } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
+import CertificatesCard from '@/components/CertificatesCard'
 
 export default function DocumentsPage() {
   const { t, tx } = useI18n()
@@ -33,8 +34,9 @@ export default function DocumentsPage() {
   return (
     <div>
       <PageHeader title={t('docs.title')} subtitle={t('docs.subtitle')} />
-      <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
-        <nav className="flex gap-2 overflow-x-auto lg:flex-col lg:gap-1">
+      <CertificatesCard />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <nav className="flex min-w-0 gap-2 overflow-x-auto lg:flex-col lg:gap-1">
           <button onClick={() => setCategory('')}
             className={`flex shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm ${!category ? 'bg-white font-medium shadow-sm' : 'text-muted hover:bg-white/60'}`}>
             {t('docs.all')} <span className="text-xs text-muted">{data?.length ?? ''}</span>

@@ -186,6 +186,7 @@ export interface Expense {
   has_receipt: boolean
   status: RequestStatus
   status_label: string
+  payslip: number | null
   reviewer_name: string | null
   review_comment: string
   reviewed_at: string | null
@@ -259,6 +260,48 @@ export interface PlatformUser {
   last_login: string | null
   date_joined: string
   password?: string
+}
+
+export interface PayItem {
+  id: number
+  employee: number
+  label: string
+  label_ar: string
+  amount: string
+  contributory: boolean
+  tax: 'scale' | 'flat' | 'exempt'
+  is_active: boolean
+}
+
+export interface MonthlyVariableRow {
+  employee: number
+  full_name: string
+  overtime_hours: string
+  overtime_rate: string
+  bonus_label: string
+  bonus_amount: string
+}
+
+export interface CertificateRequest {
+  id: number
+  employee: UserLite
+  kind: 'work' | 'salary'
+  kind_label: string
+  comment: string
+  status: RequestStatus
+  status_label: string
+  document: number | null
+  review_comment: string
+  reviewed_at: string | null
+  created_at: string
+}
+
+export interface AuditEntry {
+  id: number
+  actor_name: string
+  action: string
+  summary: string
+  created_at: string
 }
 
 export interface Preset {

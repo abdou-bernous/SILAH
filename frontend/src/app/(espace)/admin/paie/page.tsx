@@ -12,6 +12,7 @@ import Button from '@/components/ui/Button'
 import { StatusBadge } from '@/components/ui/Badge'
 import Field from '@/components/ui/Field'
 import { HrOnly } from '@/components/AppShell'
+import MonthlyVariablesCard from '@/components/MonthlyVariablesCard'
 
 type Tax = 'scale' | 'flat' | 'exempt'
 type Bonus = { preset: string; label: string; label_ar: string; amount: string; contributory: boolean; tax: Tax }
@@ -23,6 +24,7 @@ export default function PayrollPage() {
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [bonuses, setBonuses] = useState<Bonus[]>([])
+  const [includeExpenses, setIncludeExpenses] = useState(true)
   const [msg, setMsg] = useState<{ tone: 'sage' | 'rose' | 'honey'; text: string; details?: string[] } | null>(null)
   const [busy, setBusy] = useState(false)
   const { data, loading, reload } = useFetch<PayslipSummary[]>(`/payslips/?scope=all&year=${year}&month=${month}`)
@@ -43,7 +45,7 @@ export default function PayrollPage() {
     setBusy(true); setMsg(null)
     try {
       const r = await api.post('/payslips/run/', {
-        year, month,
+        year, month, include_expenses: includeExpenses,
         bonuses: bonuses.filter((b) => b.label && Number(b.amount) > 0)
           .map(({ label, label_ar, amount, contributory, tax }) => ({ label, label_ar, amount, contributory, tax })),
       })
@@ -83,7 +85,7 @@ export default function PayrollPage() {
   return (
     <HrOnly>
       <PageHeader title={t('nav.payroll')} subtitle={t('payroll.subtitle')} />
-      <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <Card title={t('payroll.prepare')}>
           <div className="space-y-4 p-5">
             <div className="grid grid-cols-2 gap-3">
@@ -132,12 +134,15 @@ export default function PayrollPage() {
                 </div>
               </div>
             </div>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={includeExpenses}
+              onChange={(e) => setIncludeExpenses(e.target.checked)} /> {t('payroll.includeExpenses')}</label>
             <p className="text-xs text-muted">{t('payroll.help')}</p>
             <Button className="w-full" onClick={run} disabled={busy}><CalculatorIcon className="h-4 w-4" /> {t('payroll.compute', { month: monthLabel(year, month) })}</Button>
           </div>
         </Card>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
+          <MonthlyVariablesCard year={year} month={month} />
           {msg && (
             <Alert tone={msg.tone}>
               {msg.text}

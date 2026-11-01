@@ -290,6 +290,8 @@ class ExpenseReport(models.Model):
     description = models.CharField(max_length=255)
     receipt = models.FileField(upload_to='receipts/%Y/%m/', null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Set when the expense is repaid through a payslip; it becomes "paid" once that payslip is published.
+    payslip = models.ForeignKey(Payslip, null=True, blank=True, on_delete=models.SET_NULL, related_name='expenses')
     reviewer = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_expenses')
     review_comment = models.TextField(blank=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
@@ -314,6 +316,81 @@ class ProfileChangeRequest(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class EmployeePayItem(models.Model):
+    """A permanent pay element of one employee (IEP, panier, transport...), on every payslip."""
+
+    class Tax(models.TextChoices):
+        SCALE = 'scale', 'Barème mensuel'
+        FLAT = 'flat', 'IRG 10 %'
+        EXEMPT = 'exempt', 'Exonéré'
+
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pay_items')
+    label = models.CharField(max_length=150)
+    label_ar = models.CharField(max_length=150, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    contributory = models.BooleanField(default=True)
+    tax = models.CharField(max_length=10, choices=Tax.choices, default=Tax.SCALE)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['id']
+
+
+class MonthlyVariable(models.Model):
+    """What changes from one month to the next for one employee. Absences come from the leave requests."""
+
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='monthly_variables')
+    year = models.PositiveIntegerField()
+    month = models.PositiveSmallIntegerField()
+    overtime_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0'))
+    # Percentage added to the hourly rate; law 90-11 (art. 32) sets a 50 % minimum.
+    overtime_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50'))
+    bonus_label = models.CharField(max_length=150, blank=True)
+    bonus_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['employee', 'year', 'month'], name='unique_monthly_variable'),
+        ]
+
+
+class CertificateRequest(models.Model):
+    """An employee asks for a certificate; on approval the PDF lands in their document vault."""
+
+    class Kind(models.TextChoices):
+        WORK = 'work', 'Attestation de travail'
+        SALARY = 'salary', 'Attestation de salaire'
+
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='certificate_requests')
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    comment = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=RequestStatus.choices, default=RequestStatus.PENDING)
+    document = models.ForeignKey(Document, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    reviewer = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_certificates')
+    review_comment = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class AuditLog(models.Model):
+    """Who did what, and when, on a company's HR data. The summary names people and
+    fields but never carries amounts or personal values."""
+
+    company = models.ForeignKey(Company, null=True, on_delete=models.SET_NULL, related_name='audit_logs')
+    actor = models.ForeignKey(User, null=True, on_delete=models.SET_NULL, related_name='audit_logs')
+    # Kept as text so the trail survives the deletion of the account.
+    actor_name = models.CharField(max_length=200)
+    action = models.CharField(max_length=40)
+    summary = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
 
 
 class Notification(models.Model):

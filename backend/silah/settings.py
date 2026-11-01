@@ -92,6 +92,12 @@ else:
     }
 
 AUTH_USER_MODEL = 'api.User'
+AUTH_PASSWORD_VALIDATORS = [
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
+]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -106,6 +112,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         # Login is unauthenticated: throttle by IP to slow down password guessing.
         'login': '20/minute',
+        'password_reset': '10/hour',
     },
     'DEFAULT_PAGINATION_CLASS': None,
 }
@@ -151,6 +158,8 @@ if config('EMAIL_HOST', default=''):
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='SILAH <noreply@silah.local>')
+# Base of the links sent by e-mail.
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3100').rstrip('/')
 
 # Uploaded payroll documents and receipts: 10 MB max per file.
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024

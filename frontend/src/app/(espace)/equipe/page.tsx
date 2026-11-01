@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { CheckIcon, PaperClipIcon, XMarkIcon, InboxIcon } from '@heroicons/react/24/outline'
+import { CheckIcon, PaperClipIcon, PlusIcon, XMarkIcon, InboxIcon } from '@heroicons/react/24/outline'
 import api, { downloadFile, errorMessage } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { useFetch } from '@/lib/useFetch'
@@ -8,8 +8,10 @@ import { useI18n } from '@/lib/i18n'
 import { date, money, num } from '@/lib/format'
 import type { Expense, LeaveRequest } from '@/lib/types'
 import Card, { EmptyState, PageHeader, Spinner } from '@/components/ui/Card'
+import Button from '@/components/ui/Button'
 import { StatusBadge } from '@/components/ui/Badge'
 import TeamCalendar from '@/components/TeamCalendar'
+import TeamLeaveModal from '@/components/TeamLeaveModal'
 import ReviewModal from '@/components/ReviewModal'
 
 type Pending = { kind: 'leave'; item: LeaveRequest } | { kind: 'expense'; item: Expense }
@@ -31,6 +33,7 @@ export default function TeamPage() {
   const leaves = useFetch<LeaveRequest[]>('/leaves/?scope=team')
   const expenses = useFetch<Expense[]>('/expenses/?scope=team')
   const [review, setReview] = useState<{ p: Pending; decision: 'approve' | 'reject' } | null>(null)
+  const [adding, setAdding] = useState(false)
 
   if (!user || (user.role !== 'manager' && !user.is_hr)) {
     return <p className="card p-8 text-center text-sm text-muted">{t('team.managersOnly')}</p>
@@ -71,7 +74,8 @@ export default function TeamPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title={t('team.title')} subtitle={user.is_hr ? t('team.subtitleHr') : t('team.subtitleManager', { n: user.team_size })} />
+      <PageHeader title={t('team.title')} subtitle={user.is_hr ? t('team.subtitleHr') : t('team.subtitleManager', { n: user.team_size })}
+        actions={<Button onClick={() => setAdding(true)}><PlusIcon className="h-4 w-4" /> {t('team.addAbsence')}</Button>} />
       <div className="flex gap-1 border-b border-stone">
         {tabs.map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
@@ -129,7 +133,9 @@ export default function TeamPage() {
                   <li key={e.id} className="flex items-center gap-3 px-5 py-3 text-sm">
                     <span className="flex-1">{e.employee.full_name} — {e.description}</span>
                     <span className="font-medium tabular-nums">{money(e.amount)}</span>
-                    <button onClick={() => markPaid(e)} className="rounded-lg border border-stone px-2.5 py-1 text-xs hover:bg-sand">{t('team.markPaid')}</button>
+                    {e.payslip ? <span className="text-xs text-muted">{t('team.inPayslip')}</span> : (
+                      <button onClick={() => markPaid(e)} className="rounded-lg border border-stone px-2.5 py-1 text-xs hover:bg-sand">{t('team.markPaid')}</button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -166,6 +172,7 @@ export default function TeamPage() {
       )}
 
       {review && <ReviewModal open decision={review.decision} summary={summary} onClose={() => setReview(null)} onConfirm={confirm} />}
+      {adding && <TeamLeaveModal onClose={() => setAdding(false)} onCreated={leaves.reload} />}
     </div>
   )
 }

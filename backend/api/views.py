@@ -5,12 +5,18 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.files.base import ContentFile
 from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied, ValidationError
@@ -24,20 +30,22 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from . import payroll
 from .models import (
-    BALANCED_LEAVE_TYPES, Company, Document, ExpenseReport, LeaveBalance, LeaveRequest, LeaveType,
-    Notification, Payslip, PayslipLine, ProfileChangeRequest, RequestStatus,
+    AuditLog, BALANCED_LEAVE_TYPES, CertificateRequest, Company, Document, EmployeePayItem, ExpenseReport,
+    LeaveBalance, LeaveRequest, LeaveType, MonthlyVariable, Notification, Payslip, PayslipLine,
+    ProfileChangeRequest, RequestStatus,
 )
-from .pdf import fmt, month_label, render_payslip
+from .pdf import fmt, month_label, render_certificate, render_payslip
 from .permissions import (
     CanManageCompanies, IsCompanyAdmin, IsPlatformAdmin, active_company, can_review, hr_recipients,
     is_company_admin, visible_companies,
 )
 from .serializers import (
-    LEAVE_TYPE_CHOICES, REQUESTABLE_FIELDS, ChangePasswordSerializer, CompanyAdminSerializer,
-    CompanySerializer, DocumentSerializer, EmployeeSerializer, ExpenseSerializer, LeaveBalanceSerializer,
-    LeaveRequestSerializer, NotificationSerializer, PayrollRunSerializer, PayslipDetailSerializer,
-    PayslipListSerializer, PlatformUserSerializer, ProfileChangeRequestSerializer, ProfileSerializer,
-    ReviewSerializer,
+    LEAVE_TYPE_CHOICES, REQUESTABLE_FIELDS, AuditLogSerializer, CertificateRequestSerializer,
+    ChangePasswordSerializer, CompanyAdminSerializer, CompanySerializer, DocumentSerializer,
+    EmployeePayItemSerializer, EmployeeSerializer, ExpenseSerializer, LeaveBalanceSerializer,
+    LeaveRequestSerializer, MonthlyVariablesSerializer, NotificationSerializer, PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer, PayrollRunSerializer, PayslipDetailSerializer, PayslipListSerializer,
+    PlatformUserSerializer, ProfileChangeRequestSerializer, ProfileSerializer, ReviewSerializer,
 )
 
 User = get_user_model()
@@ -57,11 +65,33 @@ def notify(user, title, message='', link='', email=False):
             logger.exception('Notification email failed')
 
 
+def audit(request, action, summary='', company=None):
+    """Record a sensitive action. `summary` names people and fields, never amounts or personal values."""
+    AuditLog.objects.create(company=company or active_company(request), actor=request.user,
+                            actor_name=str(request.user), action=action, summary=summary[:255])
+
+
 def reviewers_for(employee):
     """Who gets told about a new request: the manager, or the company's HR / accountants."""
     if employee.manager and employee.manager.is_active:
         return [employee.manager]
     return [u for u in hr_recipients(employee.company) if u.id != employee.id]
+
+
+def employee_bonuses(emp, year, month):
+    """Everything specific to one employee for one month: permanent items, overtime, individual bonus."""
+    items = [payroll.Bonus(i.label, i.amount, i.contributory, i.tax, i.label_ar)
+             for i in emp.pay_items.filter(is_active=True)]
+    variable = MonthlyVariable.objects.filter(employee=emp, year=year, month=month).first()
+    if variable and variable.overtime_hours > 0:
+        preset = payroll.PRESETS['overtime']
+        items.append(payroll.Bonus(f"{preset['label']} ({variable.overtime_hours} h, +{variable.overtime_rate} %)",
+                                   payroll.overtime_amount(emp.base_salary, variable.overtime_hours, variable.overtime_rate),
+                                   preset['contributory'], preset['tax'], preset['label_ar']))
+    if variable and variable.bonus_amount > 0:
+        items.append(payroll.Bonus(variable.bonus_label or 'Prime individuelle', variable.bonus_amount,
+                                   label_ar='منحة فردية'))
+    return items
 
 
 def weekend_of(user):
@@ -195,6 +225,54 @@ class ChangePasswordView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class PasswordResetRequestView(APIView):
+    """Always answers 204, so the form cannot be used to find out who has an account."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = 'password_reset'
+
+    def post(self, request):
+        s = PasswordResetRequestSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        users = User.objects.filter(email__iexact=s.validated_data['email'], is_active=True).select_related('company')
+        for user in users:
+            if user.company and not user.company.is_active:
+                continue
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            link = f'{settings.FRONTEND_URL}/reinitialiser?uid={uid}&token={default_token_generator.make_token(user)}'
+            try:
+                send_mail('[SILAH] Réinitialisation de votre mot de passe',
+                          f'Bonjour,\n\nCe lien permet de choisir un nouveau mot de passe pour le compte '
+                          f'{user.username} :\n{link}\n\nSi vous n\'êtes pas à l\'origine de cette demande, '
+                          f'ignorez ce message.', settings.DEFAULT_FROM_EMAIL, [user.email])
+            except Exception:  # never reveal a delivery problem to an anonymous caller
+                logger.exception('Password reset email failed')
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = 'password_reset'
+
+    def post(self, request):
+        s = PasswordResetConfirmSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        try:
+            user = User.objects.get(pk=force_str(urlsafe_base64_decode(s.validated_data['uid'])), is_active=True)
+        except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+            user = None
+        if user is None or not default_token_generator.check_token(user, s.validated_data['token']):
+            raise ValidationError({'token': 'Ce lien est invalide ou a expiré.'})
+        try:
+            validate_password(s.validated_data['new_password'], user)
+        except DjangoValidationError as e:
+            raise ValidationError({'new_password': e.messages})
+        user.set_password(s.validated_data['new_password'])
+        user.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class CompanyView(APIView):
     """The active company."""
 
@@ -209,6 +287,7 @@ class CompanyView(APIView):
         s = CompanySerializer(c, data=request.data, partial=True)
         s.is_valid(raise_exception=True)
         s.save()
+        audit(request, 'company.update', c.name, c)
         return Response(s.data)
 
 
@@ -251,6 +330,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
         c = self.get_object()
         c.is_active = False
         c.save(update_fields=['is_active'])
+        audit(request, 'company.deactivate', c.name, c)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=['post'])
@@ -260,6 +340,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
         c = self.get_object()
         c.is_active = True
         c.save(update_fields=['is_active'])
+        audit(request, 'company.reactivate', c.name, c)
         return Response(CompanyAdminSerializer(self.get_queryset().get(pk=c.pk)).data)
 
     @action(detail=False, methods=['get'])
@@ -429,7 +510,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         return super().get_permissions()
 
     def perform_create(self, serializer):
-        serializer.save(company=require_company(self.request))
+        emp = serializer.save(company=require_company(self.request))
+        audit(self.request, 'employee.create', str(emp))
+
+    def perform_update(self, serializer):
+        fields = ', '.join(sorted(serializer.validated_data))
+        emp = serializer.save()
+        audit(self.request, 'employee.update', f'{emp} : {fields}')
 
     def destroy(self, request, *args, **kwargs):
         # Payroll records must be kept: deactivate instead of deleting.
@@ -438,6 +525,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             raise ValidationError('Vous ne pouvez pas désactiver votre propre compte.')
         emp.is_active = False
         emp.save(update_fields=['is_active'])
+        audit(request, 'employee.deactivate', str(emp))
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=['get', 'post'])
@@ -509,6 +597,7 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         p = self.get_object()
         if p.status != Payslip.Status.DRAFT:
             raise ValidationError('Un bulletin publié ne peut pas être supprimé.')
+        audit(request, 'payroll.delete', f'{p.employee} {month_label(p.year, p.month)}')
         p.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -536,6 +625,7 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         if p.company_id != active_company(request).id:
             raise PermissionDenied()
         self._publish(p)
+        audit(request, 'payroll.publish', f'{p.employee} {month_label(p.year, p.month)}')
         return Response(PayslipListSerializer(p).data)
 
     @staticmethod
@@ -545,6 +635,8 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         p.status = Payslip.Status.PUBLISHED
         p.published_at = timezone.now()
         p.save(update_fields=['status', 'published_at'])
+        # Expenses carried by this payslip are repaid with it.
+        p.expenses.filter(status=ExpenseReport.Status.APPROVED).update(status=ExpenseReport.Status.PAID)
         notify(p.employee, f'Votre bulletin de {month_label(p.year, p.month).lower()} est disponible',
                f'Net à payer : {fmt(p.net_salary)} DA', f'/bulletins/{p.id}', email=True)
 
@@ -581,7 +673,16 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
                                                       start_date__lte=last, end_date__gte=first):
                     unpaid += payroll.overlap_days(lr.start_date, lr.end_date, year, month, weekend,
                                                    lr.start_half, lr.end_half)
-                result = payroll.compute_payslip(emp.base_salary, bonuses, unpaid, disabled=emp.is_disabled)
+                items = bonuses + employee_bonuses(emp, year, month)
+                expenses = []
+                if s.validated_data['include_expenses']:
+                    expenses = list(ExpenseReport.objects.filter(
+                        Q(payslip__isnull=True) | Q(payslip=existing), employee=emp,
+                        status=ExpenseReport.Status.APPROVED))
+                    if expenses:
+                        items.append(payroll.Bonus('Remboursement de frais', sum(e.amount for e in expenses),
+                                                   contributory=False, tax='exempt', label_ar='تسديد المصاريف'))
+                result = payroll.compute_payslip(emp.base_salary, items, unpaid, disabled=emp.is_disabled)
                 warnings += [{'employee': str(emp), 'message': w} for w in result.warnings]
                 p = existing or Payslip(employee=emp, year=year, month=month)
                 p.company = company
@@ -601,10 +702,15 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
                                 base=l.base, rate=l.rate, employee_amount=l.employee_amount,
                                 employer_amount=l.employer_amount)
                     for i, l in enumerate(result.lines)])
+                p.expenses.exclude(id__in=[e.id for e in expenses]).filter(
+                    status=ExpenseReport.Status.APPROVED).update(payslip=None)
+                ExpenseReport.objects.filter(id__in=[e.id for e in expenses]).update(payslip=p)
                 if s.validated_data['publish']:
                     self._publish(p)
                 created.append(p)
 
+        if created:
+            audit(request, 'payroll.run', f'{month_label(year, month)} : {len(created)} bulletin(s)', company)
         return Response({'created': PayslipListSerializer(created, many=True).data, 'skipped': skipped,
                          'warnings': warnings}, status=status.HTTP_201_CREATED)
 
@@ -617,7 +723,42 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         for p in drafts.select_related('employee'):
             self._publish(p)
             count += 1
+        if count:
+            audit(request, 'payroll.publish', f'{month_label(year, month)} : {count} bulletin(s)', company)
         return Response({'published': count})
+
+    @action(detail=False, methods=['get', 'post'], permission_classes=[IsCompanyAdmin])
+    def variables(self, request):
+        """The monthly grid: one row per employee, overtime and individual bonus."""
+        company = require_company(request)
+        if request.method == 'GET':
+            year, month = year_param(request.query_params.get('year')), month_param(request.query_params.get('month'))
+            saved = {v.employee_id: v for v in MonthlyVariable.objects.filter(
+                employee__company=company, year=year, month=month)}
+            rows = []
+            for emp in User.objects.filter(company=company, is_active=True, base_salary__gt=0).order_by('last_name', 'first_name'):
+                v = saved.get(emp.id)
+                rows.append({'employee': emp.id, 'full_name': str(emp),
+                             'overtime_hours': v.overtime_hours if v else Decimal('0'),
+                             'overtime_rate': v.overtime_rate if v else payroll.OVERTIME_MIN_RATE,
+                             'bonus_label': v.bonus_label if v else '',
+                             'bonus_amount': v.bonus_amount if v else Decimal('0')})
+            return Response(rows)
+
+        s = MonthlyVariablesSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        year, month = s.validated_data['year'], s.validated_data['month']
+        with transaction.atomic():
+            for row in s.validated_data['rows']:
+                emp = row.pop('employee')
+                if emp.company_id != company.id:
+                    raise ValidationError({'employee': "Ce salarié n'appartient pas à l'entreprise."})
+                if row['overtime_hours'] or row['bonus_amount']:
+                    MonthlyVariable.objects.update_or_create(employee=emp, year=year, month=month, defaults=row)
+                else:
+                    MonthlyVariable.objects.filter(employee=emp, year=year, month=month).delete()
+        audit(request, 'payroll.variables', month_label(year, month), company)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=['get'], permission_classes=[IsCompanyAdmin])
     def summary(self, request):
@@ -626,6 +767,41 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         year, month = year_param(request.query_params.get('year')), month_param(request.query_params.get('month'))
         qs = Payslip.objects.filter(company=company, year=year, month=month)
         return Response(payroll_month_totals(qs))
+
+
+class EmployeePayItemViewSet(viewsets.ModelViewSet):
+    """Permanent pay elements of the active company's employees."""
+    serializer_class = EmployeePayItemSerializer
+    permission_classes = [IsCompanyAdmin]
+
+    def get_queryset(self):
+        qs = EmployeePayItem.objects.filter(employee__company=active_company(self.request))
+        if self.request.query_params.get('employee'):
+            qs = qs.filter(employee_id=int_param(self.request.query_params['employee'], 'employee'))
+        return qs
+
+    def _save(self, serializer):
+        employee = serializer.validated_data.get('employee')
+        if employee and employee.company_id != require_company(self.request).id:
+            raise ValidationError({'employee': "Ce salarié n'appartient pas à l'entreprise."})
+        item = serializer.save()
+        audit(self.request, 'payitem.update', f'{item.employee} : {item.label}')
+
+    perform_create = _save
+    perform_update = _save
+
+    def perform_destroy(self, instance):
+        audit(self.request, 'payitem.update', f'{instance.employee} : {instance.label}')
+        instance.delete()
+
+
+class AuditLogViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """The active company's journal, most recent first."""
+    serializer_class = AuditLogSerializer
+    permission_classes = [IsCompanyAdmin]
+
+    def get_queryset(self):
+        return AuditLog.objects.filter(company=active_company(self.request))[:200]
 
 
 # ---------------------------------------------------------------- documents
@@ -668,12 +844,14 @@ class DocumentViewSet(viewsets.ModelViewSet):
         if serializer.instance.company_id != company.id:
             raise PermissionDenied()
         self._check_employee(serializer, company)
-        serializer.save()
+        doc = serializer.save()
+        audit(self.request, 'document.update', doc.title)
 
     def perform_create(self, serializer):
         company = require_company(self.request)
         self._check_employee(serializer, company)
         doc = serializer.save(uploaded_by=self.request.user, company=company)
+        audit(self.request, 'document.create', f'{doc.title} ({doc.employee or company})')
         if doc.employee:
             notify(doc.employee, 'Nouveau document dans votre coffre-fort', doc.title, '/documents', email=True)
         else:
@@ -683,6 +861,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         if instance.company_id != active_company(self.request).id:
             raise PermissionDenied()
+        audit(self.request, 'document.delete', instance.title)
         instance.delete()
 
     @action(detail=True, methods=['get'])
@@ -716,30 +895,49 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
             return qs
         return visible_to(self.request, qs)
 
-    def perform_create(self, serializer):
-        user = self.request.user
-        if not user.company_id:
-            raise ValidationError("Votre compte n'est rattaché à aucune entreprise.")
-        d = serializer.validated_data
-        days = payroll.count_leave_days(d['start_date'], d['end_date'], weekend_of(user),
+    def _checked_days(self, employee, d):
+        days = payroll.count_leave_days(d['start_date'], d['end_date'], weekend_of(employee),
                                         d.get('start_half', False), d.get('end_half', False))
         if days <= 0:
             raise ValidationError('La période choisie ne contient aucun jour ouvré.')
         overlap = LeaveRequest.objects.filter(
-            employee=user, status__in=[RequestStatus.PENDING, RequestStatus.APPROVED],
+            employee=employee, status__in=[RequestStatus.PENDING, RequestStatus.APPROVED],
             start_date__lte=d['end_date'], end_date__gte=d['start_date'])
         if overlap.exists():
             raise ValidationError('Une demande existe déjà sur cette période.')
         if d['leave_type'] in BALANCED_LEAVE_TYPES:
-            bal = next(b for b in balance_summary(user, d['start_date'].year) if b['leave_type'] == d['leave_type'])
+            bal = next(b for b in balance_summary(employee, d['start_date'].year) if b['leave_type'] == d['leave_type'])
             if bal['remaining'] - bal['pending'] < days:
                 raise ValidationError(
                     f"Solde insuffisant : {bal['remaining'] - bal['pending']} jour(s) disponible(s), {days} demandé(s).")
+        return days
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if not user.company_id:
+            raise ValidationError("Votre compte n'est rattaché à aucune entreprise.")
+        days = self._checked_days(user, serializer.validated_data)
         lr = serializer.save(employee=user, days=days)
         for r in reviewers_for(user):
             notify(r, f"Demande d'absence de {user}",
                    f'{lr.get_leave_type_display()} du {lr.start_date:%d/%m/%Y} au {lr.end_date:%d/%m/%Y} ({days} j)',
                    '/equipe', email=True)
+
+    @action(detail=False, methods=['post'])
+    def for_employee(self, request):
+        """A manager or HR records an absence for someone else: it is approved straight away."""
+        emp = User.objects.filter(is_active=True, id=int_param(request.data.get('employee'), 'employee')).first()
+        if emp is None or not can_review(request, emp):
+            raise PermissionDenied("Vous ne pouvez pas saisir d'absence pour cette personne.")
+        s = self.get_serializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        days = self._checked_days(emp, s.validated_data)
+        lr = s.save(employee=emp, days=days, status=RequestStatus.APPROVED, reviewer=request.user,
+                    reviewed_at=timezone.now())
+        notify(emp, 'Une absence a été enregistrée pour vous',
+               f'{lr.get_leave_type_display()} du {lr.start_date:%d/%m/%Y} au {lr.end_date:%d/%m/%Y}', '/absences', email=True)
+        audit(request, 'leave.create_for', f'{emp} : {lr.get_leave_type_display()}', emp.company)
+        return Response(LeaveRequestSerializer(lr).data, status=status.HTTP_201_CREATED)
 
     def _review(self, request, new_status):
         lr = self.get_object()
@@ -754,6 +952,8 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
         notify(lr.employee, f"Votre demande d'absence a été {verb}",
                f'{lr.get_leave_type_display()} du {lr.start_date:%d/%m/%Y} au {lr.end_date:%d/%m/%Y}'
                + (f' — {lr.review_comment}' if lr.review_comment else ''), '/absences', email=True)
+        audit(request, f"leave.{'approve' if new_status == RequestStatus.APPROVED else 'reject'}",
+              f'{lr.employee} : {lr.get_leave_type_display()}', lr.employee.company)
         return Response(LeaveRequestSerializer(lr).data)
 
     @action(detail=True, methods=['post'])
@@ -884,6 +1084,8 @@ class ExpenseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Cr
         notify(exp.employee, f'Votre note de frais a été {verb}',
                f'{exp.description} — {fmt(exp.amount)} DA' + (f' — {exp.review_comment}' if exp.review_comment else ''),
                '/notes-de-frais', email=True)
+        audit(request, f"expense.{'approve' if new_status == ExpenseReport.Status.APPROVED else 'reject'}",
+              f'{exp.employee} : {exp.description}', exp.employee.company)
         return Response(ExpenseSerializer(exp).data)
 
     @action(detail=True, methods=['post'])
@@ -901,8 +1103,11 @@ class ExpenseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Cr
             raise PermissionDenied()
         if exp.status != ExpenseReport.Status.APPROVED:
             raise ValidationError('Seule une note validée peut être marquée remboursée.')
+        if exp.payslip_id:
+            raise ValidationError('Cette note est déjà incluse dans un bulletin : elle sera remboursée à sa publication.')
         exp.status = ExpenseReport.Status.PAID
         exp.save(update_fields=['status'])
+        audit(request, 'expense.paid', f'{exp.employee} : {exp.description}')
         notify(exp.employee, 'Note de frais remboursée', f'{exp.description} — {fmt(exp.amount)} DA', '/notes-de-frais')
         return Response(ExpenseSerializer(exp).data)
 
@@ -978,6 +1183,7 @@ class ProfileChangeRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin
         emp.save()
         mark_reviewed(req, request.user, RequestStatus.APPROVED, request.data.get('comment', ''))
         notify(emp, 'Votre dossier a été mis à jour', 'Les modifications demandées ont été appliquées.', '/profil')
+        audit(request, 'profile.approve', f"{emp} : {', '.join(sorted(req.changes))}")
         return Response(ProfileChangeRequestSerializer(req).data)
 
     @action(detail=True, methods=['post'])
@@ -986,6 +1192,7 @@ class ProfileChangeRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin
         self._check_admin(request, req)
         mark_reviewed(req, request.user, RequestStatus.REJECTED, request.data.get('comment', ''))
         notify(req.employee, 'Demande de modification refusée', req.review_comment, '/profil')
+        audit(request, 'profile.reject', str(req.employee))
         return Response(ProfileChangeRequestSerializer(req).data)
 
     @action(detail=True, methods=['post'])
@@ -996,6 +1203,78 @@ class ProfileChangeRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin
         req.status = RequestStatus.CANCELLED
         req.save(update_fields=['status'])
         return Response(ProfileChangeRequestSerializer(req).data)
+
+
+# ---------------------------------------------------------------- certificates
+
+class CertificateRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
+    serializer_class = CertificateRequestSerializer
+
+    def get_queryset(self):
+        qs = CertificateRequest.objects.select_related('employee', 'employee__company')
+        if self.action == 'list':
+            qs = scoped_queryset(self.request, qs)
+            if self.request.query_params.get('status'):
+                qs = qs.filter(status=self.request.query_params['status'])
+            return qs
+        cond = Q(employee=self.request.user)
+        if is_company_admin(self.request):
+            cond |= Q(employee__company=active_company(self.request))
+        return qs.filter(cond)
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if not user.company_id:
+            raise ValidationError("Votre compte n'est rattaché à aucune entreprise.")
+        kind = serializer.validated_data['kind']
+        if CertificateRequest.objects.filter(employee=user, kind=kind, status=RequestStatus.PENDING).exists():
+            raise ValidationError('Une demande de ce type est déjà en cours de traitement.')
+        req = serializer.save(employee=user)
+        for hr in hr_recipients(user.company):
+            if hr.id != user.id:
+                notify(hr, f'{req.get_kind_display()} demandée par {user}', req.comment, '/admin/demandes')
+
+    def _check_admin(self, request, req):
+        if not is_company_admin(request) or req.employee.company_id != active_company(request).id:
+            raise PermissionDenied('Réservé à la gestion RH.')
+        if req.employee_id == request.user.id:
+            raise PermissionDenied('Vous ne pouvez pas traiter votre propre demande.')
+        if req.status != RequestStatus.PENDING:
+            raise ValidationError('Cette demande a déjà été traitée.')
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        req = self.get_object()
+        self._check_admin(request, req)
+        emp = req.employee
+        pdf = render_certificate(req, date.today())
+        title = f'{req.get_kind_display()} — {date.today():%d/%m/%Y}'
+        doc = Document(company=emp.company, employee=emp, category=Document.Category.CERTIFICATE,
+                       title=title, uploaded_by=request.user)
+        doc.file.save(f'{req.kind}_{emp.username}.pdf', ContentFile(pdf), save=True)
+        req.document = doc
+        mark_reviewed(req, request.user, RequestStatus.APPROVED, request.data.get('comment', ''))
+        notify(emp, 'Votre attestation est disponible', title, '/documents', email=True)
+        audit(request, 'certificate.approve', f'{emp} : {req.get_kind_display()}')
+        return Response(CertificateRequestSerializer(req).data)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        req = self.get_object()
+        self._check_admin(request, req)
+        mark_reviewed(req, request.user, RequestStatus.REJECTED, request.data.get('comment', ''))
+        notify(req.employee, "Demande d'attestation refusée", req.review_comment, '/documents')
+        audit(request, 'certificate.reject', f'{req.employee} : {req.get_kind_display()}')
+        return Response(CertificateRequestSerializer(req).data)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        req = self.get_object()
+        if req.employee_id != request.user.id or req.status != RequestStatus.PENDING:
+            raise ValidationError('Cette demande ne peut pas être annulée.')
+        req.status = RequestStatus.CANCELLED
+        req.save(update_fields=['status'])
+        return Response(CertificateRequestSerializer(req).data)
 
 
 # ---------------------------------------------------------------- notifications

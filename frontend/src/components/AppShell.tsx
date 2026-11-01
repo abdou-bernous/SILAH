@@ -6,7 +6,7 @@ import {
   HomeIcon, BanknotesIcon, FolderIcon, CalendarDaysIcon, ReceiptPercentIcon, UserCircleIcon,
   UserGroupIcon, UsersIcon, CalculatorIcon, DocumentArrowUpIcon, ClipboardDocumentCheckIcon,
   BuildingOfficeIcon, BellIcon, Bars3Icon, XMarkIcon, ArrowRightStartOnRectangleIcon, ChartBarIcon,
-  BuildingOffice2Icon, ShieldCheckIcon,
+  BuildingOffice2Icon, ClockIcon, ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
 import { useAuth } from '@/context/AuthContext'
 import { useI18n, type TKey } from '@/lib/i18n'
@@ -33,6 +33,7 @@ const HR: Item[] = [
   { href: '/admin/documents', label: 'nav.uploadDocs', icon: DocumentArrowUpIcon },
   { href: '/admin/demandes', label: 'nav.profileRequests', icon: ClipboardDocumentCheckIcon },
   { href: '/admin/entreprise', label: 'nav.company', icon: BuildingOfficeIcon },
+  { href: '/admin/journal', label: 'nav.journal', icon: ClockIcon },
 ]
 const PLATFORM: Item[] = [
   { href: '/plateforme', label: 'nav.platformDashboard', icon: ChartBarIcon },
@@ -42,6 +43,29 @@ const PLATFORM: Item[] = [
 const ACCOUNTANT: Item[] = [{ href: '/entreprises', label: 'nav.myCompanies', icon: BuildingOffice2Icon }]
 // Accountants and admins have no employee space: they still need their own account page.
 const ACCOUNT: Item = { href: '/profil', label: 'nav.account', icon: UserCircleIcon }
+
+// Thumb-reachable shortcuts on phones. Everything else stays in the side menu.
+const TABS = MAIN.filter((i) => i.href !== '/documents')
+
+function TabBar() {
+  const pathname = usePathname()
+  const { t } = useI18n()
+  return (
+    <nav className="no-print fixed inset-x-0 bottom-0 z-30 flex border-t border-stone bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+      {TABS.map((item) => {
+        const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href)
+        const Icon = item.icon
+        return (
+          <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
+            className={`flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 text-[10px] ${active ? 'font-medium text-coffee' : 'text-muted'}`}>
+            <Icon className="h-5 w-5 shrink-0" />
+            <span className="max-w-full truncate">{t(item.label)}</span>
+          </Link>
+        )
+      })}
+    </nav>
+  )
+}
 
 function NavLink({ item, onNavigate }: { item: Item; onNavigate: () => void }) {
   const pathname = usePathname()
@@ -121,7 +145,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="no-print sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-stone bg-cream/90 px-4 backdrop-blur sm:gap-3 sm:px-6">
+        <header className="no-print sticky top-0 z-30 flex min-h-16 items-center gap-2 border-b border-stone bg-cream/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur sm:gap-3 sm:px-6">
           <button onClick={() => setOpen(true)} className="rounded-lg p-2 text-muted hover:bg-sand lg:hidden" aria-label={t('common.openMenu')}>
             <Bars3Icon className="h-5 w-5" />
           </button>
@@ -152,8 +176,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </header>
-        <main className="print-full mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 lg:py-8">{children}</main>
+        <main className={`print-full mx-auto w-full max-w-6xl flex-1 px-4 pt-6 sm:px-6 lg:py-8 ${hasEmployeeSpace ? 'pb-24' : 'pb-6'}`}>{children}</main>
       </div>
+      {hasEmployeeSpace && <TabBar />}
     </div>
   )
 }

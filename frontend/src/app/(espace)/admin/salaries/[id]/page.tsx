@@ -12,6 +12,7 @@ import Card, { Alert, PageHeader, Spinner } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import { StatusBadge } from '@/components/ui/Badge'
 import EmployeeForm from '@/components/EmployeeForm'
+import PayItemsCard from '@/components/PayItemsCard'
 import { HrOnly } from '@/components/AppShell'
 
 function BalancesEditor({ employeeId }: { employeeId: number }) {
@@ -96,6 +97,7 @@ export default function EmployeeDetailPage() {
           </div>
         </Card>
         <div className="grid gap-6 lg:grid-cols-2">
+          <PayItemsCard employeeId={data.id} />
           <BalancesEditor employeeId={data.id} />
           <Card title={t('nav.payslips')}>
             <ul className="divide-y divide-stone">

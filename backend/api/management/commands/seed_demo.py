@@ -14,7 +14,8 @@ from reportlab.pdfgen import canvas
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from api.models import (
-    Company, Document, ExpenseReport, LeaveBalance, LeaveRequest, LeaveType, Notification, RequestStatus, User,
+    CertificateRequest, Company, Document, EmployeePayItem, ExpenseReport, LeaveBalance, LeaveRequest, LeaveType,
+    Notification, RequestStatus, User,
 )
 from api.payroll import PRESETS
 from api.views import PayslipViewSet
@@ -164,6 +165,14 @@ class Command(BaseCommand):
                                    format='json')
                 force_authenticate(req, user=runner)
                 view(req)
+
+        # Approved after the last payroll run: repaid by the next payslip.
+        ExpenseReport.objects.create(employee=salarie, date=today - timedelta(days=2), category='transport',
+                                     amount=Decimal('1500'), description='Péage autoroute Est-Ouest',
+                                     status=ExpenseReport.Status.APPROVED, reviewer=manager)
+        EmployeePayItem.objects.create(employee=salarie, label=PRESETS['panier']['label'], amount=Decimal('2400'),
+                                       label_ar=PRESETS['panier']['label_ar'], contributory=False)
+        CertificateRequest.objects.create(employee=yasmine, kind=CertificateRequest.Kind.WORK)
 
         Notification.objects.filter(user=salarie).update(read=True)
         Notification.objects.create(user=salarie, title='Bienvenue sur SILAH',

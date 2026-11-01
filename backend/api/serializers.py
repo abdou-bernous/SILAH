@@ -6,9 +6,10 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
 from .models import (
-    Company, Payslip, PayslipLine, Document, LeaveBalance, LeaveRequest,
-    ExpenseReport, ProfileChangeRequest, Notification, LeaveType,
+    AuditLog, CertificateRequest, Company, EmployeePayItem, Payslip, PayslipLine, Document, LeaveBalance,
+    LeaveRequest, ExpenseReport, ProfileChangeRequest, Notification, LeaveType,
 )
+from .payroll import OVERTIME_MIN_RATE
 
 User = get_user_model()
 
@@ -308,6 +309,8 @@ class PayrollRunSerializer(serializers.Serializer):
     employees = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(is_active=True), many=True, required=False)
     bonuses = BonusInputSerializer(many=True, required=False)
     publish = serializers.BooleanField(default=False)
+    # Repay the approved expenses through the payslip instead of by a separate transfer.
+    include_expenses = serializers.BooleanField(default=True)
 
 
 class DocumentSerializer(serializers.ModelSerializer):
@@ -387,8 +390,9 @@ class ExpenseSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExpenseReport
         fields = ['id', 'employee', 'date', 'category', 'category_label', 'amount', 'description', 'receipt',
-                  'has_receipt', 'status', 'status_label', 'reviewer_name', 'review_comment', 'reviewed_at', 'created_at']
-        read_only_fields = ['status', 'review_comment', 'reviewed_at', 'created_at']
+                  'has_receipt', 'status', 'status_label', 'payslip', 'reviewer_name', 'review_comment', 'reviewed_at',
+                  'created_at']
+        read_only_fields = ['status', 'payslip', 'review_comment', 'reviewed_at', 'created_at']
         extra_kwargs = {'receipt': {'write_only': True}}
 
     has_receipt = serializers.SerializerMethodField()
@@ -443,6 +447,56 @@ class ProfileChangeRequestSerializer(serializers.ModelSerializer):
 
 class ReviewSerializer(serializers.Serializer):
     comment = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class EmployeePayItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeePayItem
+        fields = ['id', 'employee', 'label', 'label_ar', 'amount', 'contributory', 'tax', 'is_active']
+        extra_kwargs = {'amount': {'min_value': 0}}
+
+
+class MonthlyVariableRowSerializer(serializers.Serializer):
+    employee = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(is_active=True))
+    overtime_hours = serializers.DecimalField(max_digits=6, decimal_places=2, min_value=0, default=0)
+    overtime_rate = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=OVERTIME_MIN_RATE,
+                                             default=OVERTIME_MIN_RATE)
+    bonus_label = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
+    bonus_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, default=0)
+
+
+class MonthlyVariablesSerializer(serializers.Serializer):
+    year = serializers.IntegerField(min_value=2000, max_value=2100)
+    month = serializers.IntegerField(min_value=1, max_value=12)
+    rows = MonthlyVariableRowSerializer(many=True)
+
+
+class CertificateRequestSerializer(serializers.ModelSerializer):
+    employee = UserLiteSerializer(read_only=True)
+    kind_label = serializers.CharField(source='get_kind_display', read_only=True)
+    status_label = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = CertificateRequest
+        fields = ['id', 'employee', 'kind', 'kind_label', 'comment', 'status', 'status_label', 'document',
+                  'review_comment', 'reviewed_at', 'created_at']
+        read_only_fields = ['status', 'document', 'review_comment', 'reviewed_at', 'created_at']
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField()
+
+
+class AuditLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AuditLog
+        fields = ['id', 'actor_name', 'action', 'summary', 'created_at']
 
 
 class NotificationSerializer(serializers.ModelSerializer):

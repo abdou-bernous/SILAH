@@ -54,9 +54,17 @@ WORKING_DAYS_PER_MONTH = Decimal('22')
 
 CENT = Decimal('0.01')
 
+# Law 90-11, art. 32: overtime pays at least 50 % more than the normal hourly rate.
+OVERTIME_MIN_RATE = Decimal('50')
+
 
 def money(value) -> Decimal:
     return Decimal(value).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def overtime_amount(base_salary, hours, rate=OVERTIME_MIN_RATE) -> Decimal:
+    hourly = Decimal(base_salary) / MONTHLY_HOURS
+    return money(hourly * Decimal(hours) * (1 + Decimal(rate) / 100))
 
 
 def compute_irg(taxable, disabled=False) -> Decimal:

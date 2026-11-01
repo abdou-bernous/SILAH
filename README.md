@@ -26,19 +26,24 @@ travaillent plus, l'historique restant conservé.
 - Tableau de bord : dernier bulletin, compteurs de congés, prochaines absences, documents récents
 - Bulletins de paie : historique par année, détail des rubriques, impression et téléchargement PDF
 - Coffre-fort de documents : contrats, attestations, documents de l'entreprise, avec catégories et recherche
+- Attestations de travail et de salaire : demande en ligne, PDF français et arabe déposé dans les documents
 - Absences & congés : soldes (congé annuel, récupération), demandes à la demi-journée avec décompte automatique
   des jours ouvrés, justificatif, annulation, calendrier de l'équipe
-- Notes de frais : déclaration avec justificatif, suivi (en attente, validée, refusée, remboursée)
+- Notes de frais : déclaration avec justificatif, suivi (en attente, validée, refusée, remboursée), remboursement
+  possible sur le bulletin
 - Profil : téléphone et contact d'urgence modifiables directement ; adresse, RIB et état civil via une demande
   validée par les RH ; changement de mot de passe
 - Notifications dans l'application (et par e-mail si un serveur SMTP est configuré)
 
 **Manager**
 - Validation ou refus (avec commentaire) des absences et notes de frais de ses collaborateurs directs
+- Saisie d'une absence pour un collaborateur, validée directement
 - Historique et planning des absences de l'équipe (le motif d'absence reste privé pour les collègues)
 
 **Gestionnaire RH**
-- Dossiers salariés : création, modification, désactivation, compteurs de congés
+- Dossiers salariés : création, modification, désactivation, compteurs de congés, rubriques de paie permanentes
+- Grille mensuelle par salarié : heures supplémentaires (au moins +50 %, loi 90-11 art. 32) et prime individuelle
+- Journal d'activité horodaté (qui a fait quoi, sans montants ni données personnelles)
 - Paie mensuelle : calcul en brouillon avec primes et indemnités, déduction automatique des congés sans solde,
   vérification, puis publication (les salariés sont notifiés)
 - Dépôt de documents dans le coffre-fort d'un salarié ou pour toute l'entreprise
@@ -176,9 +181,10 @@ frontend/
 
 ## Pistes pour la suite
 
-- Réinitialisation du mot de passe par e-mail
 - Import de salariés par fichier CSV et export comptable de la paie
 - Signature électronique des documents
 - Traduction en arabe des messages d'erreur de l'API et des notifications
 - Fichiers de déclaration (G50, DAS annuelle CNAS) prêts à déposer
-- Application mobile (Capacitor, comme FarmHub)
+- Application mobile : le site est prêt, voir [docs/mobile.md](docs/mobile.md)
+
+La comparaison détaillée avec My Silae et les priorités sont dans [docs/comparaison-my-silae.md](docs/comparaison-my-silae.md).

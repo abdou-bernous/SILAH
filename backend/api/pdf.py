@@ -4,13 +4,14 @@ Arabic text is reshaped (contextual letter forms) and reordered for right-to-lef
 before drawing, since ReportLab has no shaping engine. DejaVu Sans covers both scripts.
 """
 import io
+import textwrap
 from decimal import Decimal
 from pathlib import Path
 
 import arabic_reshaper
 from bidi.algorithm import get_display
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
@@ -55,6 +56,51 @@ def fmt(value):
 
 def month_label(year, month):
     return f'{MONTHS[month - 1].capitalize()} {year}'
+
+
+def render_certificate(request, issued_on) -> bytes:
+    """Work or salary certificate, French first, then Arabic. ReportLab cannot wrap
+    reordered Arabic text, so its lines are cut before being shaped."""
+    e, c = request.employee, request.employee.company
+    salary = request.kind == 'salary'
+    title_fr, title_ar = ('Attestation de salaire', 'شهادة أجر') if salary else ('Attestation de travail', 'شهادة عمل')
+    name = e.get_full_name() or e.username
+    contract_fr, contract_ar = CONTRACTS.get(e.contract_type, CONTRACTS['other'])
+    hired = e.hire_date.strftime('%d/%m/%Y') if e.hire_date else '—'
+    today = issued_on.strftime('%d/%m/%Y')
+
+    text_fr = (f'Nous soussignés, {c.name}, attestons que {name}, matricule {e.employee_number or "—"}, '
+               f'fait partie de notre personnel depuis le {hired}, en qualité de {e.job_title or "—"}, '
+               f'sous contrat {contract_fr}.')
+    text_ar = (f'نحن الموقعين أدناه، {c.name_ar or c.name}، نشهد أن {name}، الرقم {e.employee_number or "—"}، '
+               f'يعمل لدينا منذ {hired}، بصفة {e.job_title or "—"}، بعقد {contract_ar}.')
+    if salary:
+        text_fr += f' Son salaire de base mensuel brut est de {fmt(e.base_salary)} DA.'
+        # A plain space would let the bidi algorithm swap the groups of digits.
+        amount = fmt(e.base_salary).replace(' ', '\u00a0')
+        text_ar += f' ويبلغ أجره القاعدي الشهري الخام {amount} دج.'
+    text_fr += " Cette attestation est délivrée à l'intéressé(e) pour servir et valoir ce que de droit."
+    text_ar += ' سُلمت هذه الشهادة للمعني بالأمر للإدلاء بها عند الحاجة.'
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=22 * mm, rightMargin=22 * mm,
+                            topMargin=22 * mm, bottomMargin=22 * mm, title=title_fr)
+    normal = ParagraphStyle('normal', fontName=FONT, fontSize=10.5, leading=16)
+    normal_r = ParagraphStyle('normal_r', parent=normal, alignment=TA_RIGHT)
+    title = ParagraphStyle('title', fontName=FONT_BOLD, fontSize=16, leading=22, alignment=TA_CENTER, textColor=COFFEE)
+
+    ids = ' · '.join(f'{k} {v}' for k, v in [('NIF', c.nif), ('NIS', c.nis), ('RC', c.rc)] if v)
+    story = [Paragraph(c.name, ParagraphStyle('company', parent=normal, fontName=FONT_BOLD))]
+    story += [Paragraph(x, normal) for x in [' '.join(filter(None, [c.address, c.city])), ids] if x]
+    story += [Spacer(1, 14 * mm), Paragraph(title_fr, title), Paragraph(ar(title_ar), title), Spacer(1, 12 * mm),
+              Paragraph(text_fr, normal), Spacer(1, 4 * mm),
+              Paragraph(f'Fait à {c.city or "—"}, le {today}.', normal), Spacer(1, 10 * mm)]
+    story += [Paragraph(ar(line), normal_r) for line in textwrap.wrap(text_ar, 84)]
+    story += [Spacer(1, 4 * mm), Paragraph(ar(f'حرر في {c.city or "—"}، بتاريخ {today}.'), normal_r),
+              Spacer(1, 22 * mm), Paragraph('Signature et cachet de l\'employeur', normal),
+              Paragraph(ar('إمضاء وختم المستخدم'), normal_r)]
+    doc.build(story)
+    return buf.getvalue()
 
 
 def render_payslip(payslip) -> bytes:

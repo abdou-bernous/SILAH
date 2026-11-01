@@ -80,7 +80,9 @@ export function errorMessage(err: unknown, fallback = ''): string {
   return fallback
 }
 
-/** Download a protected file (the API needs the bearer token, so a plain link won't do). */
+/** Download a protected file (the API needs the bearer token, so a plain link won't do).
+ *  Every download goes through here: blob links do not work in a mobile WebView, so this is
+ *  the one place to plug Capacitor Filesystem and Share (see docs/mobile.md). */
 export async function downloadFile(url: string, fallbackName = 'document') {
   const res = await api.get(url, { responseType: 'blob' })
   const disposition: string = res.headers['content-disposition'] || ''

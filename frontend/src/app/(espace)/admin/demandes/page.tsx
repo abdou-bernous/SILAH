@@ -5,7 +5,7 @@ import api, { errorMessage } from '@/lib/api'
 import { useFetch } from '@/lib/useFetch'
 import { useI18n } from '@/lib/i18n'
 import { date } from '@/lib/format'
-import type { ProfileRequest } from '@/lib/types'
+import type { CertificateRequest, ProfileRequest } from '@/lib/types'
 import Card, { EmptyState, PageHeader, Spinner } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import { StatusBadge } from '@/components/ui/Badge'
@@ -17,6 +17,15 @@ export default function ProfileRequestsPage() {
   const [showAll, setShowAll] = useState(false)
   const { data, loading, reload } = useFetch<ProfileRequest[]>(`/profile-requests/?scope=all${showAll ? '' : '&status=pending'}`)
   const [review, setReview] = useState<{ r: ProfileRequest; decision: 'approve' | 'reject' } | null>(null)
+  const certificates = useFetch<CertificateRequest[]>('/certificates/?scope=team&status=pending')
+  const [certReview, setCertReview] = useState<{ c: CertificateRequest; decision: 'approve' | 'reject' } | null>(null)
+
+  const confirmCert = async (comment: string) => {
+    if (!certReview) return
+    try { await api.post(`/certificates/${certReview.c.id}/${certReview.decision}/`, { comment }) }
+    catch (e) { throw new Error(errorMessage(e)) }
+    certificates.reload()
+  }
 
   const confirm = async (comment: string) => {
     if (!review) return
@@ -29,6 +38,21 @@ export default function ProfileRequestsPage() {
     <HrOnly>
       <PageHeader title={t('nav.profileRequests')} subtitle={t('preq.subtitle')}
         actions={<label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> {t('preq.showHistory')}</label>} />
+      {!!certificates.data?.length && (
+        <Card className="mb-4" title={t('cert.requests')}>
+          <ul className="divide-y divide-stone">
+            {certificates.data.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
+                <span><strong className="font-medium">{c.employee.full_name}</strong> · {tx(`certKind.${c.kind}`, c.kind_label)} <span className="text-xs text-muted">· {date(c.created_at)}</span></span>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="danger" onClick={() => setCertReview({ c, decision: 'reject' })}>{t('common.reject')}</Button>
+                  <Button size="sm" variant="success" onClick={() => setCertReview({ c, decision: 'approve' })}>{t('cert.issue')}</Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
       {loading ? <Spinner /> : !data?.length ? (
         <Card><EmptyState icon={<ClipboardDocumentCheckIcon />} title={t('preq.empty')} /></Card>
       ) : (
@@ -62,6 +86,8 @@ export default function ProfileRequestsPage() {
       )}
       {review && <ReviewModal open decision={review.decision} onClose={() => setReview(null)} onConfirm={confirm}
         summary={<>{t('preq.requestOf')} <strong>{review.r.employee.full_name}</strong> : {Object.keys(review.r.changes).map((k) => tx(`field.${k}`, k)).join(t('common.listSep'))}</>} />}
+      {certReview && <ReviewModal open decision={certReview.decision} onClose={() => setCertReview(null)} onConfirm={confirmCert}
+        summary={<><strong>{certReview.c.employee.full_name}</strong> : {tx(`certKind.${certReview.c.kind}`, certReview.c.kind_label)}</>} />}
     </HrOnly>
   )
 }

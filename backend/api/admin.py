@@ -2,8 +2,8 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
 from .models import (
-    Company, Document, ExpenseReport, LeaveBalance, LeaveRequest, Notification, Payslip, PayslipLine,
-    ProfileChangeRequest, User,
+    AuditLog, CertificateRequest, Company, Document, EmployeePayItem, ExpenseReport, LeaveBalance, LeaveRequest,
+    MonthlyVariable, Notification, Payslip, PayslipLine, ProfileChangeRequest, User,
 )
 
 
@@ -51,4 +51,5 @@ class CompanyAdmin(admin.ModelAdmin):
     filter_horizontal = ['managers']
 
 
-admin.site.register([Document, LeaveBalance, ProfileChangeRequest, Notification])
+admin.site.register([AuditLog, CertificateRequest, Document, EmployeePayItem, LeaveBalance, MonthlyVariable,
+                     Notification, ProfileChangeRequest])

@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { BanknotesIcon, CalendarDaysIcon, FolderIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import { login } from '@/lib/auth'
@@ -95,7 +96,7 @@ export default function LoginPage() {
               {loading ? t('login.loading') : t('login.submit')}
             </Button>
           </form>
-          <p className="mt-4 text-xs text-muted">{t('login.forgot')}</p>
+          <Link href="/mot-de-passe-oublie" className="mt-4 inline-block text-xs font-medium text-coffee hover:underline">{t('login.forgot')}</Link>
 
           {SHOW_DEMO && (
             <div className="mt-10 rounded-xl border border-dashed border-latte bg-white/60 p-4">
