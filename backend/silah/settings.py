@@ -116,7 +116,7 @@ SIMPLE_JWT = {
 }
 
 CORS_ALLOWED_ORIGINS = config(
-    'CORS_ALLOWED_ORIGINS', default='http://localhost:3000'
+    'CORS_ALLOWED_ORIGINS', default='http://localhost:3100'
 ).split(',')
 # Downloads read the file name from this header, which browsers hide cross-origin by default.
 CORS_EXPOSE_HEADERS = ['Content-Disposition']

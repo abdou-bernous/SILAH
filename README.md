@@ -58,7 +58,7 @@ par des routes d'API authentifiées qui vérifient les droits de l'utilisateur.
 docker compose up --build
 ```
 
-Ouvrez http://localhost:3000. La base est remplie avec une entreprise fictive (`SEED_DEMO=1`).
+Ouvrez http://localhost:3100. La base est remplie avec une entreprise fictive (`SEED_DEMO=1`).
 
 ### Sans Docker
 
@@ -70,7 +70,7 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py seed_demo        # entreprise et comptes de démonstration
-python manage.py runserver
+python manage.py runserver 8100
 ```
 
 Frontend (dans un autre terminal) :
@@ -80,6 +80,9 @@ cd frontend
 npm install
 npm run dev
 ```
+
+Ports : le frontend tourne sur http://localhost:3100 et l'API sur http://localhost:8100 (pour ne pas entrer en
+conflit avec d'autres projets sur 3000 / 8000). L'admin Django est sur http://localhost:8100/admin/.
 
 ### Comptes de démonstration
 
