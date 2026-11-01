@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext'
 import { getActiveCompany, setActiveCompany } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 
-/** Lets accountants and the platform admin pick the company they are working on. */
+/** Lets accountants pick the company they are working on. */
 export default function CompanySwitcher() {
   const { user } = useAuth()
   const { t } = useI18n()

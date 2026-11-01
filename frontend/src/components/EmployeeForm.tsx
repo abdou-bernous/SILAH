@@ -9,7 +9,7 @@ import Button from './ui/Button'
 import Field from './ui/Field'
 import { Alert } from './ui/Card'
 
-type Dir = { id: number; full_name: string }[]
+type Dir = { id: number; full_name: string; role: string }[]
 
 // Salaire national minimum garanti (décret présidentiel 2024).
 const SNMG = 24000
@@ -101,7 +101,8 @@ export default function EmployeeForm({ initial, onSaved, onCancel }: {
         <Field label={t('field.manager')}>
           <select className="input" value={form.manager ?? ''} onChange={(e) => setForm({ ...form, manager: e.target.value ? Number(e.target.value) : null })}>
             <option value="">{t('common.none')}</option>
-            {directory?.filter((d) => d.id !== initial?.id).map((d) => <option key={d.id} value={d.id}>{d.full_name}</option>)}
+            {directory?.filter((d) => d.id !== initial?.id && (d.role === 'manager' || d.role === 'hr' || d.id === form.manager))
+              .map((d) => <option key={d.id} value={d.id}>{d.full_name}</option>)}
           </select>
         </Field>
         <Field label={t('field.base_salary')}

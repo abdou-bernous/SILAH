@@ -32,6 +32,14 @@ class CompanySerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'name_ar', 'legal_form', 'sector', 'address', 'city', 'phone', 'email',
                   'nif', 'nis', 'rc', 'cnas_number', 'weekend_days', 'annual_leave_days', 'is_active']
         read_only_fields = ['is_active']
+        extra_kwargs = {'annual_leave_days': {'min_value': 0}}
+
+    def validate_weekend_days(self, value):
+        if not isinstance(value, list) or any(type(d) is not int or not 0 <= d <= 6 for d in value):
+            raise serializers.ValidationError('Jours de repos invalides.')
+        if len(set(value)) >= 7:
+            raise serializers.ValidationError('Il faut au moins un jour travaillé dans la semaine.')
+        return value
 
 
 class CompanyAdminSerializer(CompanySerializer):
@@ -41,7 +49,7 @@ class CompanyAdminSerializer(CompanySerializer):
 
     class Meta(CompanySerializer.Meta):
         fields = CompanySerializer.Meta.fields + ['employee_count', 'managers', 'created_at']
-        read_only_fields = ['employee_count', 'created_at']
+        read_only_fields = CompanySerializer.Meta.read_only_fields + ['employee_count', 'created_at']
 
     def get_managers(self, obj):
         return [{'id': u.id, 'full_name': u.get_full_name() or u.username} for u in obj.managers.all()]
@@ -183,6 +191,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
         company = self.context.get('company')
         if value and company and value.company_id != company.id:
             raise serializers.ValidationError("Le manager doit appartenir à la même entreprise.")
+        if value and value.role not in (User.Role.MANAGER, User.Role.HR):
+            raise serializers.ValidationError('Cette personne doit avoir le rôle Manager ou RH.')
         return value
 
     def validate_password(self, value):

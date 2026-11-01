@@ -72,7 +72,7 @@ export const messages = {
   'nav.myCompanies': ['Mes entreprises', 'مؤسساتي'],
   'nav.notifications': ['Notifications', 'الإشعارات'],
   'nav.account': ['Mon compte', 'حسابي'],
-  'nav.section.platform': ['Plateforme', 'المنصة'],
+  'nav.section.platform': ['Administration système', 'إدارة النظام'],
   'nav.section.firm': ['Cabinet', 'المكتب'],
   'nav.section.mine': ['Mon espace', 'فضائي'],
   'nav.section.management': ['Management', 'التسيير'],
@@ -472,7 +472,7 @@ export const messages = {
   'firms.confirmDeactivate': ['Désactiver {name} ? Ses salariés ne pourront plus se connecter ; l\'historique de paie est conservé.', 'تعطيل {name}؟ لن يتمكن عمالها من الدخول، ويُحفظ سجل الأجور.'],
 
   // ------------------------------------------------------------------ platform admin
-  'platform.subtitle': ["Vue d'ensemble de toutes les entreprises, comptes et paies de la plateforme.", 'نظرة شاملة على كل المؤسسات والحسابات والأجور في المنصة.'],
+  'platform.subtitle': ['Supervision de la plateforme en chiffres agrégés. Les dossiers RH et la paie restent gérés par les comptables et les RH.', 'متابعة المنصة بأرقام إجمالية. تبقى ملفات الموارد البشرية والأجور من اختصاص المحاسبين ومسؤولي الموارد البشرية.'],
   'platform.companies': ['Entreprises actives', 'المؤسسات النشطة'],
   'platform.inactive': ['{n} désactivée(s)', '{n} معطلة'],
   'platform.employees': ['Salariés', 'العمال'],

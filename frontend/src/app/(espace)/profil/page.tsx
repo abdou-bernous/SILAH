@@ -133,7 +133,9 @@ function PasswordModal({ open, onClose }: { open: boolean; onClose: () => void }
 export default function ProfilePage() {
   const { user, refresh } = useAuth()
   const { t, tx } = useI18n()
-  const { data: requests, reload } = useFetch<ProfileRequest[]>('/profile-requests/')
+  // Accountants and the system admin belong to no company: no employee file to show or change.
+  const hasEmployeeSpace = !!user?.company
+  const { data: requests, reload } = useFetch<ProfileRequest[]>(hasEmployeeSpace ? '/profile-requests/' : null)
   const [contact, setContact] = useState<{ phone: string; emergency_contact: string } | null>(null)
   const [msg, setMsg] = useState('')
   const [requestOpen, setRequestOpen] = useState(false)

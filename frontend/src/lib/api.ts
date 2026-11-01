@@ -21,7 +21,7 @@ export function setActiveCompany(id: number | string | null) {
 api.interceptors.request.use((config) => {
   const token = Cookies.get('access_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
-  // Accountants and the platform admin work on one company at a time; the API ignores
+  // Accountants work on one company at a time; the API ignores
   // this header for everyone else and never lets it reach a company they don't manage.
   const company = getActiveCompany()
   if (company) config.headers['X-Company'] = company

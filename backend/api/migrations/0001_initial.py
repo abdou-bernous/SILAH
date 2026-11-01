@@ -108,7 +108,7 @@ class Migration(migrations.Migration):
                             ("manager", "Manager"),
                             ("hr", "Gestionnaire RH"),
                             ("accountant", "Comptable / gestionnaire de paie"),
-                            ("admin", "Administrateur plateforme"),
+                            ("admin", "Administrateur système"),
                         ],
                         default="employee",
                         max_length=20,

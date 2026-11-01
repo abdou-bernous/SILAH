@@ -66,11 +66,10 @@ export default function CompaniesPage() {
   const [open, setOpen] = useState(false)
   const { data, loading, reload } = useFetch<CompanyOverview[]>(`/companies/overview/?q=${encodeURIComponent(q)}`)
 
-  if (!user || !(user.is_platform_admin || user.role === 'accountant')) {
+  const isAccountant = user?.role === 'accountant'
+  if (!user || !(isAccountant || user.is_platform_admin)) {
     return <p className="card p-8 text-center text-sm text-muted">{t('common.hrOnly')}</p>
   }
-  // The platform admin manages companies as a whole; only accountants work inside them.
-  const canEnter = user.role === 'accountant'
 
   const enter = (c: { id: number }, path = '/admin/paie') => {
     setActiveCompany(c.id)
@@ -91,7 +90,7 @@ export default function CompaniesPage() {
     <div>
       <PageHeader title={user.is_platform_admin ? t('nav.companies') : t('nav.myCompanies')}
         subtitle={data ? t('firms.count', { n: data.length }) : undefined}
-        actions={<Button onClick={() => setOpen(true)}><PlusIcon className="h-4 w-4" /> {t('firms.new')}</Button>} />
+        actions={isAccountant ? <Button onClick={() => setOpen(true)}><PlusIcon className="h-4 w-4" /> {t('firms.new')}</Button> : undefined} />
 
       <div className="relative mb-4 max-w-md">
         <MagnifyingGlassIcon className="pointer-events-none absolute start-3 top-2.5 h-4 w-4 text-muted" />
@@ -99,7 +98,7 @@ export default function CompaniesPage() {
       </div>
 
       {loading && !data ? <Spinner /> : !data?.length ? (
-        <Card><EmptyState icon={<BuildingOffice2Icon />} title={t('firms.empty')}>{t('firms.emptyHint')}</EmptyState></Card>
+        <Card><EmptyState icon={<BuildingOffice2Icon />} title={t('firms.empty')}>{isAccountant ? t('firms.emptyHint') : undefined}</EmptyState></Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {data.map((c) => {
@@ -144,7 +143,7 @@ export default function CompaniesPage() {
                       {c.is_active ? t('firms.deactivate') : t('firms.reactivate')}
                     </Button>
                   )}
-                  {c.is_active && canEnter && <>
+                  {c.is_active && isAccountant && <>
                     <Button size="sm" variant="outline" onClick={() => enter(c, '/admin/salaries')}><UsersIcon className="h-4 w-4" /> {t('nav.employees')}</Button>
                     <Button size="sm" onClick={() => enter(c)}><CalculatorIcon className="h-4 w-4" /> {t('nav.payroll')} <ArrowRightIcon className="h-3.5 w-3.5 rtl:rotate-180" /></Button>
                   </>}
@@ -156,7 +155,7 @@ export default function CompaniesPage() {
       )}
 
       <NewCompanyModal open={open} onClose={() => setOpen(false)}
-        onCreated={async (c) => { setOpen(false); await refresh(); reload(); if (canEnter) enter(c, '/admin/salaries') }} />
+        onCreated={async (c) => { setOpen(false); await refresh(); reload(); enter(c, '/admin/salaries') }} />
     </div>
   )
 }

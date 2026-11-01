@@ -1,8 +1,8 @@
 # SILAH — portail paie & RH
 
 SILAH est un espace en ligne où chaque salarié retrouve sa paie et ses démarches RH, où le service RH ou le
-comptable prépare la paie de une ou plusieurs entreprises, et où l'administrateur de la plateforme supervise
-l'ensemble. L'interface est disponible en **français et en arabe** (mise en page de droite à gauche), et les
+comptable prépare la paie de une ou plusieurs entreprises, et où l'administrateur système supervise la
+plateforme. L'interface est disponible en **français et en arabe** (mise en page de droite à gauche), et les
 bulletins suivent la **réglementation algérienne**. Le design est volontairement doux (tons cappuccino et gris clair).
 
 ## Rôles
@@ -13,11 +13,12 @@ bulletins suivent la **réglementation algérienne**. Le design est volontaireme
 | Manager | Valide les demandes de ses collaborateurs directs |
 | Gestionnaire RH | Gère les salariés, la paie et les documents de **son** entreprise |
 | Comptable / gestionnaire de paie | Gère **plusieurs entreprises clientes** : en crée de nouvelles, bascule de l'une à l'autre (sélecteur en haut de l'écran) et y fait tout ce que fait un RH |
-| Administrateur système | Administre la plateforme sans accéder aux dossiers des salariés ni à la paie : tableau de bord global (chiffres agrégés), création et désactivation des entreprises, comptes des comptables et attribution des entreprises |
+| Administrateur système | Supervise la plateforme : tableau de bord en chiffres agrégés (entreprises, salariés, masse salariale sur 6 mois, demandes en attente), comptes des comptables et attribution des entreprises, désactivation d'une entreprise. **Aucun accès** aux dossiers salariés, à la paie, aux documents ni à l'identité des employeurs |
 
 Chaque entreprise est cloisonnée : un RH ne voit que la sienne, un comptable seulement celles qui lui sont
 attribuées (l'en-tête `X-Company` envoyé par le frontend est revérifié côté serveur à chaque requête).
-Une entreprise désactivée est fermée : ses membres ne peuvent plus se connecter.
+Une entreprise désactivée ne peut plus se connecter : les sessions ouvertes sont coupées et ses comptables n'y
+travaillent plus, l'historique restant conservé.
 
 ## Fonctionnalités du MVP
 
@@ -131,7 +132,10 @@ Mot de passe commun : `Silah2026!`
 | `rh` | Gestionnaire RH d'Atlas Distribution |
 | `rh.nour`, `sofiane`, `lina` | RH et salariés de Nour Pharma (Oran) |
 | `comptable` | Comptable qui gère Atlas Distribution et Nour Pharma |
-| `admin` | Administrateur système (accès aussi à l'admin Django sur `/admin/`) |
+| `admin` | Administrateur système |
+
+L'admin Django (`/admin/`) donne accès à toutes les données : il n'est pas ouvert au compte `admin`. Réservez-le à
+la maintenance technique, avec un compte créé par `python manage.py createsuperuser`.
 
 En production, désactivez l'encart de démonstration de la page de connexion avec `NEXT_PUBLIC_SHOW_DEMO=0`
 et ne lancez pas `seed_demo`.
@@ -139,7 +143,7 @@ et ne lancez pas `seed_demo`.
 ## Tests
 
 ```bash
-cd backend && python manage.py test               # 55 tests : paie, droits par rôle, cloisonnement
+cd backend && python manage.py test               # paie, droits par rôle, cloisonnement, validation
 cd frontend && npm test && npx tsc --noEmit && npm run build
 ```
 

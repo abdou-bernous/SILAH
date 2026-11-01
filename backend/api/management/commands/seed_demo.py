@@ -106,7 +106,7 @@ class Command(BaseCommand):
                          email='cabinet@kaci-conseil.example', role=User.Role.ACCOUNTANT, phone='0560 00 00 10')
         comptable.managed_companies.set([company, nour])
         make('admin', company=None, first_name='Admin', last_name='SILAH', email='admin@silah.example',
-             role=User.Role.ADMIN, is_staff=True, is_superuser=True)
+             role=User.Role.ADMIN)
 
         today = date.today()
         for u in [rh, manager, salarie, yasmine, rh_nour, sofiane, lina]:

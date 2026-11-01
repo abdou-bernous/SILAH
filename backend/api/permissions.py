@@ -55,7 +55,7 @@ def active_company(request):
 
 def is_company_admin(request, company=None):
     company = company or active_company(request)
-    if company is None:
+    if company is None or not company.is_active:
         return False
     return managed_companies(request.user).filter(id=company.id).exists()
 
@@ -87,19 +87,24 @@ class IsCompanyAdmin(BasePermission):
 
 
 class IsPlatformAdmin(BasePermission):
-    message = "Réservé à l'administrateur de la plateforme."
+    message = "Réservé à l'administrateur système."
 
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and request.user.is_platform_admin)
 
 
 class CanManageCompanies(BasePermission):
-    """Accountants and the platform admin create and edit companies."""
-    message = 'Réservé aux comptables et à l\'administrateur.'
+    """Accountants create and edit employers; the platform admin only supervises them."""
+    message = 'Réservé aux comptables et à l\'administrateur système.'
 
     def has_permission(self, request, view):
         u = request.user
-        return bool(u and u.is_authenticated and (u.is_platform_admin or u.role == User.Role.ACCOUNTANT))
+        if not u or not u.is_authenticated:
+            return False
+        accountant = u.role == User.Role.ACCOUNTANT
+        if view.action in ('create', 'update', 'partial_update'):
+            return accountant
+        return accountant or u.is_platform_admin
 
 
 # Backwards-compatible name used by the views.

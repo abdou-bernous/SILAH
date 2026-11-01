@@ -30,7 +30,7 @@ from .models import (
 from .pdf import fmt, month_label, render_payslip
 from .permissions import (
     CanManageCompanies, IsCompanyAdmin, IsPlatformAdmin, active_company, can_review, hr_recipients,
-    is_company_admin, managed_companies, visible_companies,
+    is_company_admin, visible_companies,
 )
 from .serializers import (
     LEAVE_TYPE_CHOICES, REQUESTABLE_FIELDS, ChangePasswordSerializer, CompanyAdminSerializer,
@@ -100,6 +100,25 @@ def require_company(request):
     if company is None:
         raise ValidationError("Aucune entreprise sélectionnée.")
     return company
+
+
+def int_param(value, name, low=None, high=None):
+    """A query or body parameter that must be an integer: bad input is a 400, not a crash."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError({name: 'Valeur invalide.'})
+    if (low is not None and number < low) or (high is not None and number > high):
+        raise ValidationError({name: 'Valeur invalide.'})
+    return number
+
+
+def year_param(value):
+    return int_param(value, 'year', 2000, 2100)
+
+
+def month_param(value):
+    return int_param(value, 'month', 1, 12)
 
 
 def scoped_queryset(request, qs):
@@ -223,8 +242,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         company = serializer.save(created_by=self.request.user)
-        if self.request.user.role == User.Role.ACCOUNTANT:
-            company.managers.add(self.request.user)
+        company.managers.add(self.request.user)
 
     def destroy(self, request, *args, **kwargs):
         # Payroll history must be kept: deactivate instead of deleting.
@@ -425,7 +443,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get', 'post'])
     def balances(self, request, pk=None):
         emp = self.get_object()
-        year = int(request.query_params.get('year') or request.data.get('year') or date.today().year)
+        year = year_param(request.query_params.get('year') or request.data.get('year') or date.today().year)
         if request.method == 'POST':
             lt = request.data.get('leave_type')
             if lt not in [t.value for t in BALANCED_LEAVE_TYPES]:
@@ -443,7 +461,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         company = active_company(request)
         qs = User.objects.filter(is_active=True, company=company).order_by('last_name', 'first_name') if company else []
         return Response([{'id': u.id, 'full_name': u.get_full_name() or u.username, 'job_title': u.job_title,
-                          'department': u.department, 'manager': u.manager_id} for u in qs])
+                          'department': u.department, 'manager': u.manager_id, 'role': u.role} for u in qs])
 
 
 # ---------------------------------------------------------------- payslips
@@ -463,16 +481,16 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         if admin and params.get('scope') == 'all':
             qs = qs.filter(company=company)
             if params.get('employee'):
-                qs = qs.filter(employee_id=params['employee'])
+                qs = qs.filter(employee_id=int_param(params['employee'], 'employee'))
             if params.get('month'):
-                qs = qs.filter(month=params['month'])
+                qs = qs.filter(month=month_param(params['month']))
         elif admin and self.action not in ('list', 'years'):
             # Own payslips, plus any payslip of the managed company.
             qs = qs.filter(Q(company=company) | Q(employee=user, status=Payslip.Status.PUBLISHED))
         else:
             qs = qs.filter(employee=user, status=Payslip.Status.PUBLISHED)
         if params.get('year'):
-            qs = qs.filter(year=params['year'])
+            qs = qs.filter(year=year_param(params['year']))
         return qs
 
     def _mark_viewed(self, p):
@@ -537,8 +555,9 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         s = PayrollRunSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         year, month = s.validated_data['year'], s.validated_data['month']
-        employees = s.validated_data.get('employees') or list(
-            User.objects.filter(company=company, is_active=True, base_salary__gt=0))
+        employees = s.validated_data.get('employees')
+        if employees is None:
+            employees = list(User.objects.filter(company=company, is_active=True, base_salary__gt=0))
         bonuses = [payroll.Bonus(**b) for b in s.validated_data.get('bonuses', [])]
         first, last = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
         weekend = company.weekend_days
@@ -592,7 +611,7 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
     @action(detail=False, methods=['post'], permission_classes=[IsCompanyAdmin])
     def publish_month(self, request):
         company = require_company(request)
-        year, month = request.data.get('year'), request.data.get('month')
+        year, month = year_param(request.data.get('year')), month_param(request.data.get('month'))
         drafts = Payslip.objects.filter(company=company, year=year, month=month, status=Payslip.Status.DRAFT)
         count = 0
         for p in drafts.select_related('employee'):
@@ -604,7 +623,7 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
     def summary(self, request):
         """Monthly totals used for the G50 (IRG) and CNAS returns."""
         company = require_company(request)
-        year, month = request.query_params.get('year'), request.query_params.get('month')
+        year, month = year_param(request.query_params.get('year')), month_param(request.query_params.get('month'))
         qs = Payslip.objects.filter(company=company, year=year, month=month)
         return Response(payroll_month_totals(qs))
 
@@ -639,11 +658,21 @@ class DocumentViewSet(viewsets.ModelViewSet):
             return [IsCompanyAdmin()]
         return super().get_permissions()
 
-    def perform_create(self, serializer):
-        company = require_company(self.request)
+    def _check_employee(self, serializer, company):
         employee = serializer.validated_data.get('employee')
         if employee and employee.company_id != company.id:
             raise ValidationError({'employee': "Ce salarié n'appartient pas à l'entreprise."})
+
+    def perform_update(self, serializer):
+        company = require_company(self.request)
+        if serializer.instance.company_id != company.id:
+            raise PermissionDenied()
+        self._check_employee(serializer, company)
+        serializer.save()
+
+    def perform_create(self, serializer):
+        company = require_company(self.request)
+        self._check_employee(serializer, company)
         doc = serializer.save(uploaded_by=self.request.user, company=company)
         if doc.employee:
             notify(doc.employee, 'Nouveau document dans votre coffre-fort', doc.title, '/documents', email=True)
@@ -683,7 +712,7 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
             if self.request.query_params.get('status'):
                 qs = qs.filter(status=self.request.query_params['status'])
             if self.request.query_params.get('year'):
-                qs = qs.filter(start_date__year=self.request.query_params['year'])
+                qs = qs.filter(start_date__year=year_param(self.request.query_params['year']))
             return qs
         return visible_to(self.request, qs)
 
@@ -756,7 +785,7 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
 
     @action(detail=False, methods=['get'])
     def balances(self, request):
-        year = int(request.query_params.get('year') or date.today().year)
+        year = year_param(request.query_params.get('year') or date.today().year)
         return Response(balance_summary(request.user, year) if request.user.company_id else [])
 
     @action(detail=False, methods=['get'])
@@ -783,14 +812,16 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
         and the employee themself see the leave type."""
         user = request.user
         today = date.today()
-        year = int(request.query_params.get('year') or today.year)
-        month = int(request.query_params.get('month') or today.month)
+        year = year_param(request.query_params.get('year') or today.year)
+        month = month_param(request.query_params.get('month') or today.month)
         first, last = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
         company = active_company(request)
         admin = is_company_admin(request)
 
         if admin:
             people = User.objects.filter(is_active=True, company=company)
+        elif not user.company_id:
+            people = User.objects.none()
         else:
             people = User.objects.filter(is_active=True, company_id=user.company_id).filter(
                 Q(id=user.id) | Q(manager=user) | (Q(manager_id=user.manager_id) if user.manager_id else Q(pk__in=[]))
@@ -914,6 +945,8 @@ class ProfileChangeRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin
 
     def perform_create(self, serializer):
         user = self.request.user
+        if not user.company_id:
+            raise ValidationError("Votre compte n'est rattaché à aucune entreprise.")
         if ProfileChangeRequest.objects.filter(employee=user, status=RequestStatus.PENDING).exists():
             raise ValidationError('Une demande de modification est déjà en cours de traitement.')
         serializer.save(employee=user)

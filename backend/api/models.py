@@ -7,7 +7,7 @@ from django.db import models
 class Company(models.Model):
     """An employer. One deployment hosts many companies: accountants (cabinets
     comptables / gestionnaires de paie) manage several of them, HR users manage
-    their own, and the platform admin sees all of them."""
+    their own, and the platform admin supervises them without reaching their HR data."""
 
     name = models.CharField(max_length=200)
     name_ar = models.CharField('Raison sociale (arabe)', max_length=200, blank=True)
@@ -48,7 +48,7 @@ class User(AbstractUser):
         MANAGER = 'manager', 'Manager'
         HR = 'hr', 'Gestionnaire RH'
         ACCOUNTANT = 'accountant', 'Comptable / gestionnaire de paie'
-        ADMIN = 'admin', 'Administrateur plateforme'
+        ADMIN = 'admin', 'Administrateur système'
 
     class MaritalStatus(models.TextChoices):
         SINGLE = 'single', 'Célibataire'
