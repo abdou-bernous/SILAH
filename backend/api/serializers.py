@@ -73,6 +73,17 @@ class PlatformUserSerializer(serializers.ModelSerializer):
             validate_password(value)
         return value
 
+    def validate(self, attrs):
+        request = self.context.get('request')
+        if self.instance is not None and request and self.instance.pk == request.user.pk:
+            # The platform must never be left without an administrator by mistake.
+            if attrs.get('role', self.instance.role) != User.Role.ADMIN or attrs.get('is_active') is False:
+                raise serializers.ValidationError('Vous ne pouvez pas retirer vos propres droits d\'administrateur.')
+        if attrs.get('role', getattr(self.instance, 'role', None)) == User.Role.ADMIN:
+            # Admins manage the platform, not companies' payroll.
+            attrs['managed_companies'] = []
+        return attrs
+
     def create(self, validated_data):
         password = validated_data.pop('password', None)
         companies = validated_data.pop('managed_companies', [])
@@ -178,6 +189,24 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if value:
             validate_password(value)
         return value
+
+    def validate_base_salary(self, value):
+        if value < 0:
+            raise serializers.ValidationError('Le salaire ne peut pas être négatif.')
+        return value
+
+    def validate_children_count(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Le nombre d'enfants ne peut pas être négatif.")
+        return value
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        if self.instance is not None and request and self.instance.pk == request.user.pk:
+            # An HR user must not lock themselves out of HR by editing their own record.
+            if attrs.get('role', self.instance.role) != self.instance.role or attrs.get('is_active') is False:
+                raise serializers.ValidationError('Vous ne pouvez pas modifier votre propre rôle ni désactiver votre compte.')
+        return attrs
 
     def create(self, validated_data):
         password = validated_data.pop('password', None)

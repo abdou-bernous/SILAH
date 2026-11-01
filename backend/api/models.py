@@ -104,8 +104,11 @@ class User(AbstractUser):
 
     @property
     def is_hr(self):
-        """Has HR powers over at least one company (the active one is decided per request)."""
-        return self.role in (self.Role.HR, self.Role.ACCOUNTANT, self.Role.ADMIN) or self.is_superuser
+        """Has HR powers over at least one company (the active one is decided per request).
+
+        The platform admin is a *system* administrator: it manages companies and accounts but
+        does not do payroll or see employee records."""
+        return self.role in (self.Role.HR, self.Role.ACCOUNTANT)
 
     @property
     def is_manager(self):

@@ -372,14 +372,20 @@ class MultiCompanyTests(ApiTestCase):
         r = self.client_for(self.hr).patch(f'/api/employees/{self.emp.id}/', {'role': 'admin'}, format='json')
         self.assertEqual(r.status_code, 400)
 
-    def test_admin_sees_everything(self):
+    def test_admin_is_a_system_admin(self):
         c = self.client_for(self.admin)
         r = c.get('/api/platform/stats/')
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data['totals']['companies'], 2)
         self.assertEqual(len(c.get('/api/companies/').data), 2)
-        ids = {e['id'] for e in c.get('/api/employees/', HTTP_X_COMPANY=str(self.other_co.id)).data}
-        self.assertIn(self.other_emp.id, ids)
+        # No access to employee records, payroll or company settings, even with a header.
+        for url in ['/api/employees/', '/api/payslips/summary/?year=2026&month=1']:
+            r = c.get(url, HTTP_X_COMPANY=str(self.other_co.id))
+            self.assertEqual(r.status_code, 403, url)
+        self.assertIsNone(c.get('/api/company/', HTTP_X_COMPANY=str(self.other_co.id)).data)
+        self.assertEqual(c.patch('/api/company/', {'name': 'X'}, format='json',
+                                 HTTP_X_COMPANY=str(self.other_co.id)).status_code, 403)
+        self.assertEqual(c.get('/api/auth/me/').data['companies'], [])
         r = c.post('/api/platform/users/', {'username': 'cab', 'password': 'Un-mot-de-passe-42', 'role': 'accountant',
                                             'companies': [self.other_co.id]}, format='json')
         self.assertEqual(r.status_code, 201, r.data)
@@ -388,6 +394,51 @@ class MultiCompanyTests(ApiTestCase):
                    format='json')
         self.assertEqual(r.status_code, 400)
         self.assertEqual(c.delete(f'/api/companies/{self.other_co.id}/').status_code, 204)
+
+    def test_admin_cannot_remove_own_admin_rights(self):
+        c = self.client_for(self.admin)
+        self.assertEqual(c.patch(f'/api/platform/users/{self.admin.id}/', {'role': 'accountant'}, format='json').status_code, 400)
+        self.assertEqual(c.patch(f'/api/platform/users/{self.admin.id}/', {'is_active': False}, format='json').status_code, 400)
+        self.assertEqual(c.delete(f'/api/platform/users/{self.admin.id}/').status_code, 400)
+        self.assertEqual(c.patch(f'/api/platform/users/{self.admin.id}/', {'phone': '0550'}, format='json').status_code, 200)
+
+    def test_admin_accounts_have_no_companies(self):
+        r = self.client_for(self.admin).post('/api/platform/users/', {
+            'username': 'admin2', 'password': 'Un-mot-de-passe-42', 'role': 'admin', 'companies': [self.company.id]},
+            format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['companies'], [])
+
+    def test_deactivated_company_is_closed(self):
+        self.client_for(self.admin).delete(f'/api/companies/{self.other_co.id}/')
+        # Members can neither log in nor keep using an old token.
+        r = APIClient().post('/api/auth/login/', {'username': 'emp2', 'password': self.password}, format='json')
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(self.client_for(self.other_emp).get('/api/dashboard/').status_code, 403)
+        # An accountant cannot work on it through the header either.
+        self.accountant.managed_companies.add(self.other_co)
+        ids = {e['id'] for e in self.client_for(self.accountant).get(
+            '/api/employees/', HTTP_X_COMPANY=str(self.other_co.id)).data}
+        self.assertNotIn(self.other_emp.id, ids)
+        self.client_for(self.admin).post(f'/api/companies/{self.other_co.id}/reactivate/')
+        r = APIClient().post('/api/auth/login/', {'username': 'emp2', 'password': self.password}, format='json')
+        self.assertEqual(r.status_code, 200)
+
+    def test_hr_cannot_lock_themselves_out(self):
+        c = self.client_for(self.hr)
+        self.assertEqual(c.patch(f'/api/employees/{self.hr.id}/', {'role': 'employee'}, format='json').status_code, 400)
+        self.assertEqual(c.patch(f'/api/employees/{self.hr.id}/', {'is_active': False}, format='json').status_code, 400)
+        self.assertEqual(c.patch(f'/api/employees/{self.hr.id}/', {'phone': '0550'}, format='json').status_code, 200)
+
+    def test_negative_salary_rejected(self):
+        r = self.client_for(self.hr).patch(f'/api/employees/{self.emp.id}/', {'base_salary': '-1'}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_accountant_only_lists_managed_companies(self):
+        ids = {c['id'] for c in self.client_for(self.accountant).get('/api/companies/').data}
+        self.assertEqual(ids, {self.company.id})
+        self.assertEqual(self.client_for(self.accountant).get(f'/api/companies/{self.other_co.id}/').status_code, 404)
+        self.assertEqual(self.client_for(self.hr).get('/api/companies/').status_code, 403)
 
     def test_company_documents_do_not_leak(self):
         self.client_for(self.other_hr).post('/api/documents/', {
@@ -399,3 +450,72 @@ class MultiCompanyTests(ApiTestCase):
         lr = LeaveRequest.objects.create(employee=self.other_emp, leave_type='sick', start_date=date(2026, 3, 1),
                                          end_date=date(2026, 3, 1), days=1)
         self.assertEqual(self.client_for(self.hr).post(f'/api/leaves/{lr.id}/approve/').status_code, 404)
+
+
+class RoleMatrixTests(ApiTestCase):
+    """Who can call what: one row per endpoint, one column per role."""
+
+    def setUp(self):
+        super().setUp()
+        self.accountant = User.objects.create_user('compta', password=self.password, role=User.Role.ACCOUNTANT)
+        self.accountant.managed_companies.set([self.company])
+        self.admin = User.objects.create_user('admin', password=self.password, role=User.Role.ADMIN)
+
+    MATRIX = [
+        # (method, url, {role: expected status})
+        ('get', '/api/employees/', {'emp': 403, 'manager': 403, 'hr': 200, 'accountant': 200, 'admin': 403}),
+        ('get', '/api/payslips/presets/', {'emp': 403, 'manager': 403, 'hr': 200, 'accountant': 200, 'admin': 403}),
+        ('get', '/api/payslips/summary/?year=2026&month=1', {'emp': 403, 'manager': 403, 'hr': 200, 'accountant': 200, 'admin': 403}),
+        ('patch', '/api/company/', {'emp': 403, 'manager': 403, 'hr': 200, 'accountant': 200, 'admin': 403}),
+        ('get', '/api/companies/', {'emp': 403, 'manager': 403, 'hr': 403, 'accountant': 200, 'admin': 200}),
+        ('get', '/api/platform/stats/', {'emp': 403, 'manager': 403, 'hr': 403, 'accountant': 403, 'admin': 200}),
+        ('get', '/api/platform/users/', {'emp': 403, 'manager': 403, 'hr': 403, 'accountant': 403, 'admin': 200}),
+        ('get', '/api/dashboard/', {'emp': 200, 'manager': 200, 'hr': 200, 'accountant': 200, 'admin': 200}),
+        ('get', '/api/payslips/', {'emp': 200, 'manager': 200, 'hr': 200, 'accountant': 200, 'admin': 200}),
+    ]
+
+    def test_matrix(self):
+        users = {'emp': self.emp, 'manager': self.manager, 'hr': self.hr, 'accountant': self.accountant, 'admin': self.admin}
+        for method, url, expected in self.MATRIX:
+            for role, status_code in expected.items():
+                with self.subTest(url=url, method=method, role=role):
+                    c = self.client_for(users[role])
+                    r = c.patch(url, {}, format='json') if method == 'patch' else c.get(url)
+                    self.assertEqual(r.status_code, status_code)
+
+    def test_admin_lists_no_payslips(self):
+        self.client_for(self.hr).post('/api/payslips/run/', {'year': 2026, 'month': 1, 'publish': True}, format='json')
+        self.assertEqual(self.client_for(self.admin).get('/api/payslips/?scope=all').data, [])
+        self.assertEqual(self.client_for(self.admin).get('/api/documents/?scope=all').data, [])
+
+
+class PayrollEdgeCaseTests(TestCase):
+    def test_full_month_unpaid_never_goes_negative(self):
+        r = compute_payslip(Decimal('50000'), [], unpaid_days=Decimal('30'))
+        self.assertEqual(r.gross_salary, Decimal('0.00'))
+        self.assertEqual(r.net_salary, Decimal('0.00'))
+
+    def test_snmg_salary_is_irg_exempt(self):
+        r = compute_payslip(Decimal('24000'), [])
+        self.assertEqual(r.income_tax, Decimal('0.00'))
+        self.assertEqual(r.net_salary, Decimal('21840.00'))      # 24 000 - 9 %
+        self.assertEqual(r.warnings, [])
+
+    def test_irg_never_negative_and_monotonic(self):
+        previous = Decimal('0')
+        for taxable in range(0, 200001, 250):
+            irg = compute_irg(Decimal(taxable))
+            self.assertGreaterEqual(irg, Decimal('0'))
+            self.assertGreaterEqual(irg + Decimal('0.01'), previous, taxable)
+            previous = irg
+
+    def test_net_identity(self):
+        r = compute_payslip(Decimal('92000'), [Bonus('PRI', Decimal('8000')),
+                                               Bonus('Transport', Decimal('3000'), contributory=False, tax='scale'),
+                                               Bonus('Scolarité', Decimal('5000'), contributory=False, tax='exempt'),
+                                               Bonus('PRC', Decimal('12000'), tax='flat')])
+        self.assertEqual(r.non_taxable, Decimal('5000.00'))
+        self.assertEqual(r.net_salary,
+                         r.gross_salary - r.social_contributions - r.income_tax - r.flat_tax + r.non_taxable)
+        self.assertEqual(r.employer_cost, r.gross_salary + r.non_taxable + r.employer_contributions)
+        self.assertEqual(r.social_contributions, Decimal('10080.00'))   # 9 % of 92 000 + 8 000 + 12 000

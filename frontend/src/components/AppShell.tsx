@@ -40,6 +40,8 @@ const PLATFORM: Item[] = [
   { href: '/plateforme/utilisateurs', label: 'nav.platformUsers', icon: ShieldCheckIcon },
 ]
 const ACCOUNTANT: Item[] = [{ href: '/entreprises', label: 'nav.myCompanies', icon: BuildingOffice2Icon }]
+// Accountants and admins have no employee space: they still need their own account page.
+const ACCOUNT: Item = { href: '/profil', label: 'nav.account', icon: UserCircleIcon }
 
 function NavLink({ item, onNavigate }: { item: Item; onNavigate: () => void }) {
   const pathname = usePathname()
@@ -88,8 +90,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const sidebar = (
     <nav className="flex h-full flex-col gap-6 overflow-y-auto px-4 py-5">
       <Link href="/" className="px-2"><Logo /></Link>
-      {user.is_platform_admin && <Section title="nav.section.platform" items={PLATFORM} onNavigate={close} />}
-      {user.role === 'accountant' && <Section title="nav.section.firm" items={ACCOUNTANT} onNavigate={close} />}
+      {user.is_platform_admin && <Section title="nav.section.platform" items={hasEmployeeSpace ? PLATFORM : [...PLATFORM, ACCOUNT]} onNavigate={close} />}
+      {user.role === 'accountant' && <Section title="nav.section.firm" items={hasEmployeeSpace ? ACCOUNTANT : [...ACCOUNTANT, ACCOUNT]} onNavigate={close} />}
       {hasEmployeeSpace && <Section title="nav.section.mine" items={MAIN} onNavigate={close} />}
       {(user.role === 'manager' || managesCompany) && <Section title="nav.section.management" items={TEAM} onNavigate={close} />}
       {managesCompany && <Section title="nav.section.hr" items={HR} onNavigate={close} />}
@@ -124,7 +126,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <Bars3Icon className="h-5 w-5" />
           </button>
           <div className="hidden sm:block lg:hidden"><Logo /></div>
-          {user.is_hr && !user.company && <CompanySwitcher />}
+          {user.role === 'accountant' && !user.company && <CompanySwitcher />}
           <div className="ms-auto flex items-center gap-1 sm:gap-2">
             <LanguageSwitcher />
             <Link href="/notifications" className="relative rounded-lg p-2 text-muted hover:bg-sand" aria-label={t('nav.notifications')}>

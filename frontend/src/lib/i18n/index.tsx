@@ -25,7 +25,7 @@ function applyToDocument(l: Locale) {
   document.documentElement.dir = l === 'ar' ? 'rtl' : 'ltr'
 }
 
-function translate(locale: Locale, key: string, vars?: Vars): string | undefined {
+export function translate(locale: Locale, key: string, vars?: Vars): string | undefined {
   const entry = (messages as Record<string, readonly [string, string]>)[key]
   if (!entry) return undefined
   let s: string = entry[locale === 'ar' ? 1 : 0]

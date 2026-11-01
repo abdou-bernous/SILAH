@@ -13,7 +13,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied, ValidationError
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -30,7 +30,7 @@ from .models import (
 from .pdf import fmt, month_label, render_payslip
 from .permissions import (
     CanManageCompanies, IsCompanyAdmin, IsPlatformAdmin, active_company, can_review, hr_recipients,
-    is_company_admin, managed_companies,
+    is_company_admin, managed_companies, visible_companies,
 )
 from .serializers import (
     LEAVE_TYPE_CHOICES, REQUESTABLE_FIELDS, ChangePasswordSerializer, CompanyAdminSerializer,
@@ -148,7 +148,11 @@ class LoginSerializer(TokenObtainPairSerializer):
             user = User.objects.filter(email__iexact=login).first()
             if user:
                 attrs[self.username_field] = user.username
-        return super().validate(attrs)
+        data = super().validate(attrs)
+        company = self.user.company
+        if company is not None and not company.is_active:
+            raise AuthenticationFailed("Le compte de votre entreprise est désactivé.")
+        return data
 
 
 class LoginView(TokenObtainPairView):
@@ -210,7 +214,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
     permission_classes = [CanManageCompanies]
 
     def get_queryset(self):
-        qs = managed_companies(self.request.user).annotate(
+        qs = visible_companies(self.request.user).annotate(
             employee_count=Count('employees', filter=Q(employees__is_active=True), distinct=True))
         q = self.request.query_params.get('q')
         if q:

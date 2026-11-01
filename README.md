@@ -13,10 +13,11 @@ bulletins suivent la **réglementation algérienne**. Le design est volontaireme
 | Manager | Valide les demandes de ses collaborateurs directs |
 | Gestionnaire RH | Gère les salariés, la paie et les documents de **son** entreprise |
 | Comptable / gestionnaire de paie | Gère **plusieurs entreprises clientes** : en crée de nouvelles, bascule de l'une à l'autre (sélecteur en haut de l'écran) et y fait tout ce que fait un RH |
-| Administrateur plateforme | Voit et gère tout : tableau de bord global (entreprises, salariés, masse salariale sur 6 mois, demandes en attente), création des comptes comptables et attribution des entreprises, désactivation d'une entreprise |
+| Administrateur système | Administre la plateforme sans accéder aux dossiers des salariés ni à la paie : tableau de bord global (chiffres agrégés), création et désactivation des entreprises, comptes des comptables et attribution des entreprises |
 
 Chaque entreprise est cloisonnée : un RH ne voit que la sienne, un comptable seulement celles qui lui sont
 attribuées (l'en-tête `X-Company` envoyé par le frontend est revérifié côté serveur à chaque requête).
+Une entreprise désactivée est fermée : ses membres ne peuvent plus se connecter.
 
 ## Fonctionnalités du MVP
 
@@ -130,7 +131,7 @@ Mot de passe commun : `Silah2026!`
 | `rh` | Gestionnaire RH d'Atlas Distribution |
 | `rh.nour`, `sofiane`, `lina` | RH et salariés de Nour Pharma (Oran) |
 | `comptable` | Comptable qui gère Atlas Distribution et Nour Pharma |
-| `admin` | Administrateur de la plateforme (accès aussi à l'admin Django sur `/admin/`) |
+| `admin` | Administrateur système (accès aussi à l'admin Django sur `/admin/`) |
 
 En production, désactivez l'encart de démonstration de la page de connexion avec `NEXT_PUBLIC_SHOW_DEMO=0`
 et ne lancez pas `seed_demo`.
@@ -138,9 +139,15 @@ et ne lancez pas `seed_demo`.
 ## Tests
 
 ```bash
-cd backend && python manage.py test
-cd frontend && npx tsc --noEmit && npm run build
+cd backend && python manage.py test               # 55 tests : paie, droits par rôle, cloisonnement
+cd frontend && npm test && npx tsc --noEmit && npm run build
 ```
+
+- Backend : moteur de paie (IRG, CNAS, cas limites), matrice « qui peut appeler quoi » pour chaque rôle,
+  cloisonnement entre entreprises, entreprise désactivée, protections contre l'auto-verrouillage (un RH ou
+  un admin ne peut pas retirer ses propres droits).
+- Frontend (Vitest) : chaque texte existe en français et en arabe avec les mêmes variables, chaque clé utilisée
+  par un écran existe, pas de clé inutilisée, formatage des montants, dates et mois algériens.
 
 ## Structure
 

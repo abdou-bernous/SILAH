@@ -122,7 +122,7 @@ export default function PlatformUsersPage() {
                       {!u.is_active && <span className="ms-1"><Badge tone="rose">{t('firms.inactive')}</Badge></span>}
                     </td>
                     <td className="px-3 py-3 text-muted">
-                      {u.role === 'admin' ? t('pusers.allCompanies') : u.companies.map((id) => names.get(id)).filter(Boolean).join(t('common.listSep')) || '—'}
+                      {u.role === 'admin' ? t('pusers.notApplicable') : u.companies.map((id) => names.get(id)).filter(Boolean).join(t('common.listSep')) || '—'}
                     </td>
                     <td className="px-3 py-3 text-muted">{u.last_login ? relative(u.last_login) : t('pusers.never')}<p className="text-[11px]">{t('pusers.since', { date: date(u.date_joined) })}</p></td>
                     <td className="px-5 py-3 text-end">

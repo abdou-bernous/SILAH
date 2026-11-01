@@ -168,7 +168,7 @@ export default function ProfilePage() {
         <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-latte text-xl font-semibold text-coffee-dark">{initials(user.full_name)}</span>
         <div>
           <p className="text-lg font-semibold">{user.full_name}</p>
-          <p className="text-sm text-muted">{user.job_title || t(`role.${user.role}` as TKey)}{user.department ? ` · ${user.department}` : ''}</p>
+          <p className="text-sm text-muted">{user.job_title || t(`role.${user.role}` as TKey)}{!user.company && user.job_title ? ` · ${t(`role.${user.role}` as TKey)}` : ''}{user.department ? ` · ${user.department}` : ''}</p>
           <p className="text-xs text-muted">{user.email}</p>
         </div>
       </div>
@@ -186,7 +186,8 @@ export default function ProfilePage() {
       )}
       {msg && <Alert tone="sage">{msg}</Alert>}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className={`grid gap-6 ${user.company ? 'lg:grid-cols-2' : 'max-w-2xl'}`}>
+        {user.company && (
         <Card title={t('profile.work')}>
           <dl className="divide-y divide-stone py-1">
             <Row label={t('field.employee_number')} value={user.employee_number} />
@@ -200,6 +201,7 @@ export default function ProfilePage() {
             <Row label={t('field.payment_method')} value={user.payment_method && tx(`payment.${user.payment_method}`, user.payment_method)} />
           </dl>
         </Card>
+        )}
 
         <Card title={t('profile.contact')}
           action={contact ? (
@@ -230,6 +232,7 @@ export default function ProfilePage() {
           )}
         </Card>
 
+        {user.company && (
         <Card className="lg:col-span-2" title={t('profile.civil')}
           action={!pending && (
             <Button size="sm" variant="ghost" onClick={() => setRequestOpen(true)}>
@@ -253,6 +256,7 @@ export default function ProfilePage() {
             </div>
           </dl>
         </Card>
+        )}
 
         {requests && requests.length > 0 && (
           <Card className="lg:col-span-2" title={t('profile.history')}>
