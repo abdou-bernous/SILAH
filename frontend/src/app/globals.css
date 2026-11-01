@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap') layer(base);
+
+@import 'tailwindcss';
+
+/* Soft cappuccino palette: warm light greys for surfaces, a muted coffee
+   brown as the single accent. Status colours are desaturated on purpose. */
+@theme {
+  --color-cream: #f7f4f0;
+  --color-sand: #efe8e1;
+  --color-latte: #dccbbb;
+  --color-coffee: #8a6e5a;
+  --color-coffee-dark: #6b5444;
+  --color-espresso: #3b322c;
+  --color-stone: #e7e1da;
+  --color-muted: #857c74;
+
+  --color-sage: #e3ebdf;
+  --color-sage-ink: #4c6844;
+  --color-honey: #f5ead6;
+  --color-honey-ink: #8a6420;
+  --color-rose: #f4e1dd;
+  --color-rose-ink: #9a4b40;
+  --color-mist: #e3e8ec;
+  --color-mist-ink: #4a5b6b;
+
+  --font-sans: Inter, system-ui, sans-serif;
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-stone);
+  }
+  body {
+    @apply bg-cream text-espresso antialiased;
+  }
+  input, select, textarea {
+    @apply text-espresso;
+  }
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-lg border border-stone bg-white px-3 py-2 text-sm outline-none transition
+      placeholder:text-muted/70 focus:border-coffee focus:ring-2 focus:ring-latte/60 disabled:bg-sand/50;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium uppercase tracking-wide text-muted;
+  }
+  .card {
+    @apply rounded-2xl border border-stone bg-white;
+  }
+  .table-head {
+    @apply bg-sand/60 text-left text-xs font-medium uppercase tracking-wide text-muted;
+  }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; }
+  .print-full { margin: 0 !important; padding: 0 !important; max-width: none !important; }
+}

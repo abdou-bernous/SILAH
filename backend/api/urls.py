@@ -1,0 +1,25 @@
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenRefreshView
+
+from . import views
+
+router = DefaultRouter()
+router.register('employees', views.EmployeeViewSet, basename='employee')
+router.register('payslips', views.PayslipViewSet, basename='payslip')
+router.register('documents', views.DocumentViewSet, basename='document')
+router.register('leaves', views.LeaveRequestViewSet, basename='leave')
+router.register('expenses', views.ExpenseViewSet, basename='expense')
+router.register('profile-requests', views.ProfileChangeRequestViewSet, basename='profile-request')
+router.register('notifications', views.NotificationViewSet, basename='notification')
+
+urlpatterns = [
+    path('', include(router.urls)),
+    path('health/', views.HealthView.as_view(), name='health'),
+    path('auth/login/', views.LoginView.as_view(), name='token_obtain'),
+    path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('auth/me/', views.MeView.as_view(), name='me'),
+    path('auth/change-password/', views.ChangePasswordView.as_view(), name='change-password'),
+    path('company/', views.CompanyView.as_view(), name='company'),
+    path('dashboard/', views.DashboardView.as_view(), name='dashboard'),
+]
