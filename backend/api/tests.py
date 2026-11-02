@@ -349,9 +349,8 @@ class MultiCompanyTests(ApiTestCase):
         c = self.client_for(self.accountant)
         ids = {e['id'] for e in c.get('/api/employees/', HTTP_X_COMPANY=str(self.company.id)).data}
         self.assertIn(self.emp.id, ids)
-        # Not managed: falls back to a managed company, never the requested one.
-        ids = {e['id'] for e in c.get('/api/employees/', HTTP_X_COMPANY=str(self.other_co.id)).data}
-        self.assertNotIn(self.other_emp.id, ids)
+        # Not managed: no company is active, never the requested one.
+        self.assertEqual(c.get('/api/employees/', HTTP_X_COMPANY=str(self.other_co.id)).status_code, 403)
         r = c.post('/api/companies/', {'name': 'Nouvelle EURL', 'city': 'Oran'}, format='json')
         self.assertEqual(r.status_code, 201, r.data)
         new_id = r.data['id']
@@ -417,9 +416,8 @@ class MultiCompanyTests(ApiTestCase):
         self.assertEqual(self.client_for(self.other_emp).get('/api/dashboard/').status_code, 403)
         # An accountant cannot work on it through the header either.
         self.accountant.managed_companies.add(self.other_co)
-        ids = {e['id'] for e in self.client_for(self.accountant).get(
-            '/api/employees/', HTTP_X_COMPANY=str(self.other_co.id)).data}
-        self.assertNotIn(self.other_emp.id, ids)
+        r = self.client_for(self.accountant).get('/api/employees/', HTTP_X_COMPANY=str(self.other_co.id))
+        self.assertEqual(r.status_code, 403)
         self.client_for(self.admin).post(f'/api/companies/{self.other_co.id}/reactivate/')
         r = APIClient().post('/api/auth/login/', {'username': 'emp2', 'password': self.password}, format='json')
         self.assertEqual(r.status_code, 200)
@@ -480,7 +478,9 @@ class RoleMatrixTests(ApiTestCase):
             for role, status_code in expected.items():
                 with self.subTest(url=url, method=method, role=role):
                     c = self.client_for(users[role])
-                    r = c.patch(url, {}, format='json') if method == 'patch' else c.get(url)
+                    # The accountant works on the client he picked, as the frontend sends it.
+                    h = {'HTTP_X_COMPANY': str(self.company.id)}
+                    r = c.patch(url, {}, format='json', **h) if method == 'patch' else c.get(url, **h)
                     self.assertEqual(r.status_code, status_code)
 
     def test_admin_lists_no_payslips(self):

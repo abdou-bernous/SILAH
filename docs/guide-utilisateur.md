@@ -3,7 +3,7 @@
 Ce guide explique comment se servir de SILAH, rôle par rôle. Les noms de boutons et de menus sont ceux affichés à
 l'écran en français. En arabe, ils sont au même endroit, avec la mise en page inversée.
 
-**Version du guide** : 2 novembre 2026, à jour avec le commit `6594a35`. Le journal des mises à jour est en fin de
+**Version du guide** : 2 novembre 2026, à jour avec le commit `526c985` et la correction « Mes clients » qui le suit. Le journal des mises à jour est en fin de
 document.
 
 ## Sommaire
@@ -278,14 +278,18 @@ personnelles.
 
 ## 5. Comptable / gestionnaire de paie
 
-Le comptable gère **plusieurs entreprises clientes**. Dans chacune, il fait tout ce que fait un RH (section 4).
+Le comptable gère **plusieurs entreprises clientes**. Il ne fait partie d'aucune : il n'apparaît dans la liste des
+salariés d'aucun client, et il n'a pas de bulletin chez eux. Dans le client qu'il a choisi, il fait tout ce que fait
+un RH (section 4).
 
-- **Mes entreprises** : une carte par entreprise, avec le nombre de salariés, la dernière paie et ce qui reste à
-  traiter (brouillons, absences, frais, modifications de dossier, attestations). **Salariés** et **Paie** ouvrent
-  l'entreprise.
-- **Changer d'entreprise** : le sélecteur en haut de l'écran.
-- **Nouvelle entreprise** : renseignez l'identité de l'employeur. Vous êtes automatiquement rattaché à l'entreprise
-  créée, et vous pouvez ensuite ajouter les salariés, dont un RH si l'entreprise en a un.
+- **Mes clients** : une carte par entreprise cliente, avec le nombre de salariés, la dernière paie et ce qui reste à
+  traiter (brouillons, absences, frais, modifications de dossier, attestations). **Salariés** et **Paie** ouvrent le
+  client.
+- **Choisir le client** : à la connexion, aucun client n'est sélectionné. Choisissez-le dans **Mes clients** ou avec
+  le sélecteur en haut de l'écran (**Choisir un client…**). Le menu de paie apparaît alors sous le titre
+  **Client : nom du client**. Pour quitter le client en cours, choisissez **Choisir un client…** dans le sélecteur.
+- **Nouveau client** : renseignez l'identité de l'employeur. L'entreprise est ajoutée à vos clients et vous pouvez
+  ensuite ajouter ses salariés, dont un RH si elle en a un.
 - **Mon compte** : vos coordonnées et votre mot de passe.
 
 Une entreprise désactivée par l'administrateur reste visible, marquée « Désactivée », mais on ne peut plus y
@@ -338,5 +342,6 @@ votre manager et le service RH. Le télétravail n'apparaît pas dans le calendr
 
 | Date | Commit | Changement |
 |---|---|---|
+| 2 novembre 2026 | après `526c985` | Comptable : « Mes clients », aucun client sélectionné à la connexion, client en cours affiché dans le menu ; il ne fait partie d'aucune entreprise cliente |
 | 2 novembre 2026 | `6594a35` | Compléments : calcul selon la date d'embauche, alerte heures sup., variables après publication, rubriques à 10 %, conditions d'une attestation, qui valide les demandes d'un RH, confidentialité du calendrier |
 | 2 novembre 2026 | `6594a35` | Première version : tous les rôles, paie, bulletin rectificatif, demandes à traiter, attestations, mot de passe oublié, usage sur téléphone |

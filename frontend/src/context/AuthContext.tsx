@@ -30,12 +30,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!isLoggedIn()) { setUser(null); setLoading(false); return }
     try {
       const { data } = await api.get<User>('/auth/me/')
-      // Users managing several companies (accountant, admin) work on one at a time: make sure a
-      // valid one is selected before any page fetches company-scoped data.
-      if (!data.company && data.companies.length) {
-        const saved = getActiveCompany()
-        if (!saved || !data.companies.some((c) => String(c.id) === saved)) setActiveCompany(data.companies[0].id)
-      }
+      // An accountant belongs to none of his clients: he picks the one to work on, none is implied.
+      // Only a client that is no longer his (removed, deactivated) is cleared.
+      const saved = getActiveCompany()
+      if (saved && !data.companies.some((c) => String(c.id) === saved)) setActiveCompany(null)
       setUser(data)
       refreshUnread()
     } catch {

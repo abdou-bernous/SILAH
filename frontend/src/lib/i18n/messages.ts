@@ -72,7 +72,7 @@ export const messages = {
   'nav.platformDashboard': ['Tableau de bord', 'لوحة القيادة'],
   'nav.companies': ['Entreprises', 'المؤسسات'],
   'nav.platformUsers': ['Comptables & admins', 'المحاسبون والمديرون'],
-  'nav.myCompanies': ['Mes entreprises', 'مؤسساتي'],
+  'nav.myCompanies': ['Mes clients', 'زبائني'],
   'nav.notifications': ['Notifications', 'الإشعارات'],
   'nav.account': ['Mon compte', 'حسابي'],
   'nav.section.platform': ['Administration système', 'إدارة النظام'],
@@ -80,7 +80,10 @@ export const messages = {
   'nav.section.mine': ['Mon espace', 'فضائي'],
   'nav.section.management': ['Management', 'التسيير'],
   'nav.section.hr': ['Paie & RH', 'الأجور والموارد البشرية'],
-  'switcher.label': ['Entreprise active', 'المؤسسة الحالية'],
+  'nav.section.client': ['Client : {name}', 'الزبون: {name}'],
+  'switcher.label': ['Client en cours', 'الزبون الحالي'],
+  'switcher.pick': ['Choisir un client…', 'اختر زبونا…'],
+  'switcher.pickFirst': ["Choisissez d'abord le client sur lequel travailler, dans « Mes clients » ou avec le sélecteur en haut de l'écran.", 'اختر أولا الزبون الذي تعمل عليه، من «زبائني» أو من القائمة في أعلى الشاشة.'],
 
   // ------------------------------------------------------------------ enums
   'role.employee': ['Salarié', 'عامل'],
@@ -508,8 +511,8 @@ export const messages = {
 
   // ------------------------------------------------------------------ companies (accountant / admin)
   'firms.count': ['{n} entreprise(s)', '{n} مؤسسة'],
-  'firms.new': ['Nouvelle entreprise', 'مؤسسة جديدة'],
-  'firms.newTitle': ['Créer une entreprise', 'إنشاء مؤسسة'],
+  'firms.new': ['Nouveau client', 'زبون جديد'],
+  'firms.newTitle': ['Ajouter une entreprise cliente', 'إضافة مؤسسة زبونة'],
   'firms.newIntro': ['Renseignez l\'identité de l\'employeur. Vous pourrez ensuite ajouter les salariés et lancer la paie.', 'أدخل هوية المستخدم. يمكنك بعدها إضافة العمال وحساب الأجور.'],
   'firms.create': ["Créer l'entreprise", 'إنشاء المؤسسة'],
   'firms.search': ['Nom, ville ou NIF…', 'الاسم، المدينة أو رقم التعريف الجبائي…'],

@@ -13,7 +13,7 @@ import { useI18n, type TKey } from '@/lib/i18n'
 import { initials } from '@/lib/format'
 import Logo from './Logo'
 import { Spinner } from './ui/Card'
-import CompanySwitcher from './CompanySwitcher'
+import CompanySwitcher, { useActiveCompany } from './CompanySwitcher'
 import LanguageSwitcher from './LanguageSwitcher'
 
 // `tab` is a shorter label for the phone tab bar, where each entry gets a fifth of the width.
@@ -84,11 +84,11 @@ function NavLink({ item, onNavigate }: { item: Item; onNavigate: () => void }) {
   )
 }
 
-function Section({ title, items, onNavigate }: { title: TKey; items: Item[]; onNavigate: () => void }) {
+function Section({ title, label, items, onNavigate }: { title: TKey; label?: string; items: Item[]; onNavigate: () => void }) {
   const { t } = useI18n()
   return (
     <div className="space-y-1">
-      <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted/80">{t(title)}</p>
+      <p className="truncate px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted/80">{label || t(title)}</p>
       {items.map((i) => <NavLink key={i.href} item={i} onNavigate={onNavigate} />)}
     </div>
   )
@@ -100,6 +100,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
+  const client = useActiveCompany()
 
   useEffect(() => {
     if (!loading && !user) router.replace('/connexion')
@@ -111,7 +112,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const close = () => setOpen(false)
   const hasEmployeeSpace = !!user.company
-  const managesCompany = user.is_hr && (user.companies.length > 0)
+  // An accountant only gets the payroll menu once he has picked the client to work on.
+  const accountant = user.role === 'accountant'
+  const managesCompany = accountant ? !!client : user.is_hr && user.companies.length > 0
   const sidebar = (
     <nav className="flex h-full flex-col gap-6 overflow-y-auto px-4 py-5">
       <Link href="/" className="px-2"><Logo /></Link>
@@ -119,7 +122,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {user.role === 'accountant' && <Section title="nav.section.firm" items={hasEmployeeSpace ? ACCOUNTANT : [...ACCOUNTANT, ACCOUNT]} onNavigate={close} />}
       {hasEmployeeSpace && <Section title="nav.section.mine" items={MAIN} onNavigate={close} />}
       {(user.role === 'manager' || managesCompany) && <Section title="nav.section.management" items={TEAM} onNavigate={close} />}
-      {managesCompany && <Section title="nav.section.hr" items={HR} onNavigate={close} />}
+      {managesCompany && <Section title="nav.section.hr" label={accountant && client ? t('nav.section.client', { name: client.name }) : undefined}
+        items={HR} onNavigate={close} />}
       <div className="mt-auto rounded-xl bg-white/70 p-3 text-xs text-muted">
         {user.company?.name || t('common.appTagline')}
         <span className="block text-[11px]">{t('common.portal')}</span>
@@ -187,8 +191,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 export function HrOnly({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
   const { t } = useI18n()
+  const client = useActiveCompany()
   if (!user?.is_hr || !user.companies.length) {
     return <p className="card p-8 text-center text-sm text-muted">{t('common.hrOnly')}</p>
+  }
+  if (user.role === 'accountant' && !client) {
+    return (
+      <div className="card p-8 text-center text-sm text-muted">
+        <p>{t('switcher.pickFirst')}</p>
+        <Link href="/entreprises" className="mt-3 inline-block font-medium text-coffee hover:underline">{t('nav.myCompanies')}</Link>
+      </div>
+    )
   }
   return <>{children}</>
 }

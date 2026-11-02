@@ -157,6 +157,32 @@ class CompanyLifecycleTests(TwoCompaniesTestCase):
         self.assertEqual(self.token('emp').status_code, 200)
 
 
+class AccountantClientTests(TwoCompaniesTestCase):
+    """An accountant belongs to none of the client companies: he works on the one he picks."""
+
+    def test_no_client_is_active_until_he_picks_one(self):
+        c = self.client_for(self.accountant)
+        self.assertEqual(c.get('/api/employees/').status_code, 403)
+        self.assertIsNone(c.get('/api/company/').data)
+        self.assertEqual(c.post('/api/payslips/run/', {'year': 2026, 'month': 10}, format='json').status_code, 403)
+        self.assertEqual(c.get('/api/dashboard/').status_code, 200)
+        self.assertEqual(c.get('/api/companies/').status_code, 200)
+
+    def test_works_on_the_picked_client(self):
+        c = self.client_for(self.accountant)
+        ids = {e['id'] for e in c.get('/api/employees/', **self.header()).data}
+        self.assertIn(self.emp.id, ids)
+        self.assertNotIn(self.accountant.id, ids)
+        self.assertEqual(c.get('/api/company/', **self.header()).data['id'], self.company.id)
+
+    def test_is_never_listed_among_a_clients_staff(self):
+        hr = self.client_for(self.hr)
+        self.assertNotIn(self.accountant.id, {e['id'] for e in hr.get('/api/employees/').data})
+        self.assertNotIn(self.accountant.id, {p['id'] for p in hr.get('/api/employees/directory/').data})
+        self.assertNotIn(self.accountant.id, {p['id'] for p in hr.get('/api/leaves/calendar/?year=2026&month=3').data['people']})
+        self.assertIsNone(self.client_for(self.accountant).get('/api/auth/me/').data['company'])
+
+
 class TenantIsolationTests(TwoCompaniesTestCase):
     def test_document_cannot_be_reassigned_to_another_company(self):
         doc = Document.objects.create(company=self.company, employee=self.emp, title='Contrat',

@@ -2,8 +2,8 @@
 
 Every request works on one *active company*:
   - employees, managers and HR users: their own company, always;
-  - accountants: one of the companies they manage, chosen with the `X-Company` header
-    (defaults to the first one);
+  - accountants: the client company they picked, sent in the `X-Company` header. They belong to
+    none of their clients, so without that header no company is active;
   - the platform admin: none. It is a system administrator (companies, accounts, global
     figures) and has no access to employee records or payroll.
 
@@ -44,11 +44,8 @@ def active_company(request):
     raw = request.headers.get('X-Company', '')
     if raw.isdigit() and user.is_hr:
         company = managed_companies(user).filter(id=int(raw), is_active=True).first()
-    if company is None:
-        if user.company_id:
-            company = user.company
-        else:
-            company = managed_companies(user).filter(is_active=True).order_by('name').first()
+    if company is None and user.company_id:
+        company = user.company
     request._silah_company = company
     return company
 
