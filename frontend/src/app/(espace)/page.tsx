@@ -146,7 +146,7 @@ export default function DashboardPage() {
               {data.recent_documents.map((d) => (
                 <li key={d.id} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
                   <div className="min-w-0">
-                    <p className="truncate font-medium">
+                    <p className="line-clamp-2 break-words font-medium">
                       {d.title}
                       {!d.viewed_at && d.employee && <span className="ms-2 inline-block h-2 w-2 rounded-full bg-coffee align-middle" title={t('common.new')} />}
                     </p>

@@ -66,7 +66,7 @@ export default function DocumentsPage() {
                     {d.employee ? <DocumentTextIcon className="h-5 w-5" /> : <BuildingOfficeIcon className="h-5 w-5" />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
+                    <p className="line-clamp-2 break-words text-sm font-medium">
                       {d.title}
                       {d.employee && !d.viewed_at && <span className="ms-2"><Badge tone="coffee">{t('common.new')}</Badge></span>}
                     </p>

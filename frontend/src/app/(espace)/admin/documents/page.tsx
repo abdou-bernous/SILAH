@@ -88,7 +88,7 @@ export default function AdminDocumentsPage() {
               {data.map((d) => (
                 <li key={d.id} className="flex items-center gap-3 px-5 py-3 text-sm">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{d.title}</p>
+                    <p className="line-clamp-2 break-words font-medium">{d.title}</p>
                     <p className="truncate text-xs text-muted">{d.employee_name || t('adoc.wholeCompany')} · {tx(`docCat.${d.category}`, d.category_label)} · {date(d.created_at)} {d.file_size ? `· ${fileSize(d.file_size)}` : ''}
                       {d.employee && ` · ${d.viewed_at ? t('docs.viewed') : t('docs.notViewed')}`}</p>
                   </div>
