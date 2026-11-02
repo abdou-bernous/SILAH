@@ -1,5 +1,6 @@
 """Per-employee payroll, expenses in payroll, manager absences, certificates, password reset, audit."""
 import re
+from datetime import date
 from decimal import Decimal
 
 import arabic_reshaper
@@ -12,6 +13,7 @@ from .models import (
     AuditLog, CertificateRequest, Document, EmployeePayItem, ExpenseReport, LeaveRequest, MonthlyVariable, Payslip, User,
 )
 from .payroll import overtime_amount
+from .pdf import certificate_text, render_certificate, render_payslip
 from .test_coherence import TwoCompaniesTestCase
 
 
@@ -43,6 +45,14 @@ class PayItemTests(TwoCompaniesTestCase):
     def test_reserved_to_company_admins(self):
         for u in [self.emp, self.manager, self.admin]:
             self.assertEqual(self.client_for(u).get('/api/pay-items/').status_code, 403)
+
+    def test_journal_tells_addition_change_and_removal_apart(self):
+        hr = self.client_for(self.hr)
+        item = hr.post('/api/pay-items/', {'employee': self.emp.id, 'label': 'IEP', 'amount': '1000'}, format='json').data
+        hr.patch(f"/api/pay-items/{item['id']}/", {'amount': '1200'}, format='json')
+        hr.delete(f"/api/pay-items/{item['id']}/")
+        actions = list(AuditLog.objects.filter(action__startswith='payitem.').order_by('id').values_list('action', flat=True))
+        self.assertEqual(actions, ['payitem.create', 'payitem.update', 'payitem.delete'])
 
 
 class MonthlyVariableTests(TwoCompaniesTestCase):
@@ -186,6 +196,29 @@ class CertificateTests(TwoCompaniesTestCase):
         self.assertEqual((doc.employee, doc.category, doc.company), (self.emp, 'certificate', self.company))
         self.assertTrue(doc.file.read().startswith(b'%PDF'))
         self.assertEqual(self.client_for(self.emp).get(f'/api/documents/{doc.id}/download/').status_code, 200)
+
+    def test_wording_follows_the_contract(self):
+        self.emp.contract_type = 'cdi'
+        fr, ar_text = certificate_text(CertificateRequest(employee=self.emp, kind='work'))
+        self.assertIn('sous contrat à durée indéterminée (CDI)', fr)
+        self.assertIn('بموجب عقد عمل غير محدد المدة', ar_text)
+        self.assertNotIn('عقد عقد', ar_text)
+        self.emp.contract_type = 'other'
+        fr, ar_text = certificate_text(CertificateRequest(employee=self.emp, kind='work'))
+        self.assertNotIn('contrat', fr)
+        self.assertNotIn('عقد', ar_text)
+
+    def test_markup_in_user_text_does_not_break_the_pdfs(self):
+        # ReportLab paragraphs read a mini-markup: '</i>' or an unclosed '<b' used to raise ValueError.
+        self.company.name, self.company.city = 'R&D </i> <b', '<font size="x">Alger'
+        self.company.save()
+        self.emp.job_title, self.emp.address = 'Chef <équipe>', 'Cité <b 12'
+        self.emp.save()
+        self.client_for(self.hr).post('/api/payslips/run/', {'year': 2026, 'month': 10, 'bonuses': [
+            {'label': 'Prime </b> projet', 'amount': '1000'}]}, format='json')
+        self.assertTrue(render_payslip(Payslip.objects.get(employee=self.emp)).startswith(b'%PDF'))
+        self.assertTrue(render_certificate(CertificateRequest(employee=self.emp, kind='salary'),
+                                           date(2026, 11, 2)).startswith(b'%PDF'))
 
     def test_salary_amount_survives_arabic_reordering(self):
         # A plain space lets the bidi algorithm print 68 000,00 as 000,00 68.

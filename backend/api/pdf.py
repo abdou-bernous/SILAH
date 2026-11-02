@@ -7,6 +7,7 @@ import io
 import textwrap
 from decimal import Decimal
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 import arabic_reshaper
 from bidi.algorithm import get_display
@@ -32,6 +33,13 @@ MONTHS_AR = ['جانفي', 'فيفري', 'مارس', 'أفريل', 'ماي', 'ج
              'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر']
 CONTRACTS = {'cdi': ('CDI', 'عقد غير محدد المدة'), 'cdd': ('CDD', 'عقد محدد المدة'),
              'intern': ('Stage', 'تربص'), 'other': ('Autre', 'آخر')}
+# How a certificate states the employment relationship. 'other' says nothing rather than something vague.
+CERTIFICATE_CONTRACTS = {
+    'cdi': ('sous contrat à durée indéterminée (CDI)', 'بموجب عقد عمل غير محدد المدة'),
+    'cdd': ('sous contrat à durée déterminée (CDD)', 'بموجب عقد عمل محدد المدة'),
+    'intern': ("dans le cadre d'un stage", 'في إطار تربص'),
+    'other': ('', ''),
+}
 MARITAL = {'single': ('Célibataire', 'أعزب'), 'married': ('Marié(e)', 'متزوج'),
            'divorced': ('Divorcé(e)', 'مطلق'), 'widowed': ('Veuf / veuve', 'أرمل')}
 PAYMENT = {'transfer': ('Virement', 'تحويل'), 'cheque': ('Chèque', 'صك'), 'cash': ('Espèces', 'نقدا')}
@@ -42,8 +50,15 @@ GREY = colors.HexColor('#6b6560')
 LINE = colors.HexColor('#e2dcd5')
 
 
+def esc(value):
+    """Paragraphs read ReportLab's mini-markup: user text is escaped, so that a '<' in a company name
+    or a pay item label can neither break the PDF nor restyle it."""
+    return escape(str(value)) if value not in (None, '') else ''
+
+
 def ar(text):
-    return get_display(arabic_reshaper.reshape(text)) if text else ''
+    """Arabic shaped and put in display order, escaped like esc()."""
+    return escape(get_display(arabic_reshaper.reshape(str(text)))) if text else ''
 
 
 def fmt(value):
@@ -58,29 +73,38 @@ def month_label(year, month):
     return f'{MONTHS[month - 1].capitalize()} {year}'
 
 
-def render_certificate(request, issued_on) -> bytes:
-    """Work or salary certificate, French first, then Arabic. ReportLab cannot wrap
-    reordered Arabic text, so its lines are cut before being shaped."""
+def certificate_text(request) -> tuple[str, str]:
+    """The body of a work or salary certificate, in French and in Arabic (logical order, not shaped)."""
     e, c = request.employee, request.employee.company
     salary = request.kind == 'salary'
-    title_fr, title_ar = ('Attestation de salaire', 'شهادة أجر') if salary else ('Attestation de travail', 'شهادة عمل')
     name = e.get_full_name() or e.username
-    contract_fr, contract_ar = CONTRACTS.get(e.contract_type, CONTRACTS['other'])
+    contract_fr, contract_ar = CERTIFICATE_CONTRACTS.get(e.contract_type, CERTIFICATE_CONTRACTS['other'])
     hired = e.hire_date.strftime('%d/%m/%Y') if e.hire_date else '—'
-    today = issued_on.strftime('%d/%m/%Y')
 
     text_fr = (f'Nous soussignés, {c.name}, attestons que {name}, matricule {e.employee_number or "—"}, '
-               f'fait partie de notre personnel depuis le {hired}, en qualité de {e.job_title or "—"}, '
-               f'sous contrat {contract_fr}.')
+               f'fait partie de notre personnel depuis le {hired}, en qualité de {e.job_title or "—"}'
+               f'{", " + contract_fr if contract_fr else ""}.')
     text_ar = (f'نحن الموقعين أدناه، {c.name_ar or c.name}، نشهد أن {name}، الرقم {e.employee_number or "—"}، '
-               f'يعمل لدينا منذ {hired}، بصفة {e.job_title or "—"}، بعقد {contract_ar}.')
+               f'يعمل لدينا منذ {hired}، بصفة {e.job_title or "—"}{"، " + contract_ar if contract_ar else ""}.')
     if salary:
-        text_fr += f' Son salaire de base mensuel brut est de {fmt(e.base_salary)} DA.'
-        # A plain space would let the bidi algorithm swap the groups of digits.
+        # Non-breaking spaces: the amount must not be cut at the end of a line, and in Arabic a plain
+        # space would let the bidi algorithm swap the groups of digits.
         amount = fmt(e.base_salary).replace(' ', '\u00a0')
+        text_fr += f' Son salaire de base mensuel brut est de {amount}\u00a0DA.'
         text_ar += f' ويبلغ أجره القاعدي الشهري الخام {amount} دج.'
     text_fr += " Cette attestation est délivrée à l'intéressé(e) pour servir et valoir ce que de droit."
     text_ar += ' سُلمت هذه الشهادة للمعني بالأمر للإدلاء بها عند الحاجة.'
+    return text_fr, text_ar
+
+
+def render_certificate(request, issued_on) -> bytes:
+    """Work or salary certificate, French first, then Arabic. ReportLab cannot wrap
+    reordered Arabic text, so its lines are cut before being shaped."""
+    c = request.employee.company
+    salary = request.kind == 'salary'
+    title_fr, title_ar = ('Attestation de salaire', 'شهادة أجر') if salary else ('Attestation de travail', 'شهادة عمل')
+    today = issued_on.strftime('%d/%m/%Y')
+    text_fr, text_ar = certificate_text(request)
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=22 * mm, rightMargin=22 * mm,
@@ -90,11 +114,11 @@ def render_certificate(request, issued_on) -> bytes:
     title = ParagraphStyle('title', fontName=FONT_BOLD, fontSize=16, leading=22, alignment=TA_CENTER, textColor=COFFEE)
 
     ids = ' · '.join(f'{k} {v}' for k, v in [('NIF', c.nif), ('NIS', c.nis), ('RC', c.rc)] if v)
-    story = [Paragraph(c.name, ParagraphStyle('company', parent=normal, fontName=FONT_BOLD))]
-    story += [Paragraph(x, normal) for x in [' '.join(filter(None, [c.address, c.city])), ids] if x]
+    story = [Paragraph(esc(c.name), ParagraphStyle('company', parent=normal, fontName=FONT_BOLD))]
+    story += [Paragraph(esc(x), normal) for x in [' '.join(filter(None, [c.address, c.city])), ids] if x]
     story += [Spacer(1, 14 * mm), Paragraph(title_fr, title), Paragraph(ar(title_ar), title), Spacer(1, 12 * mm),
-              Paragraph(text_fr, normal), Spacer(1, 4 * mm),
-              Paragraph(f'Fait à {c.city or "—"}, le {today}.', normal), Spacer(1, 10 * mm)]
+              Paragraph(esc(text_fr), normal), Spacer(1, 4 * mm),
+              Paragraph(esc(f'Fait à {c.city or "—"}, le {today}.'), normal), Spacer(1, 10 * mm)]
     story += [Paragraph(ar(line), normal_r) for line in textwrap.wrap(text_ar, 84)]
     story += [Spacer(1, 4 * mm), Paragraph(ar(f'حرر في {c.city or "—"}، بتاريخ {today}.'), normal_r),
               Spacer(1, 22 * mm), Paragraph('Signature et cachet de l\'employeur', normal),
@@ -126,22 +150,22 @@ def render_payslip(payslip) -> bytes:
                               ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
     story = [head, Spacer(1, 5 * mm)]
 
-    company_lines = [f'<b>{c.name} {c.legal_form}</b>' if c else '<b>Employeur</b>']
+    company_lines = [f'<b>{esc(c.name)} {esc(c.legal_form)}</b>' if c else '<b>Employeur</b>']
     if c and c.name_ar:
         company_lines.append(ar(c.name_ar))
     if c:
-        company_lines += [x for x in [c.address, c.city] if x]
+        company_lines += [esc(x) for x in [c.address, c.city] if x]
         for k, v in [('NIF', c.nif), ('NIS', c.nis), ('RC', c.rc), ('N° employeur CNAS', c.cnas_number)]:
             if v:
-                company_lines.append(f'{k} : {v}')
+                company_lines.append(f'{k} : {esc(v)}')
 
     def pair(fr, ar_label, value):
-        return f'{fr} / {ar(ar_label)} : <b>{value or "—"}</b>'
+        return f'{fr} / {ar(ar_label)} : <b>{esc(value) or "—"}</b>'
 
     contract = CONTRACTS.get(e.contract_type, ('', ''))
     marital = MARITAL.get(e.marital_status, ('', ''))
-    employee_lines = [f'<b>{e.get_full_name() or e.username}</b>']
-    employee_lines += [x for x in [e.address, e.city] if x]
+    employee_lines = [f'<b>{esc(e.get_full_name() or e.username)}</b>']
+    employee_lines += [esc(x) for x in [e.address, e.city] if x]
     employee_lines += [
         pair('Matricule', 'الرقم', e.employee_number),
         pair('N° SS', 'رقم الضمان الاجتماعي', e.social_security_number),
@@ -174,7 +198,7 @@ def render_payslip(payslip) -> bytes:
              head_cell('Taux', 'النسبة', True), head_cell('Gain / Retenue', 'المبلغ', True),
              head_cell('Part employeur', 'حصة المستخدم', True)]]
     for line in payslip.lines.all():
-        label = line.label + (f'<br/><font color="#6b6560">{ar(line.label_ar)}</font>' if line.label_ar else '')
+        label = esc(line.label) + (f'<br/><font color="#6b6560">{ar(line.label_ar)}</font>' if line.label_ar else '')
         if line.code == 'R100':
             base, rate = f'{fmt(line.base)} h', fmt(line.rate)
         elif line.kind == 'deduction':
@@ -230,7 +254,7 @@ def render_payslip(payslip) -> bytes:
         f'Coût employeur / {ar("تكلفة المستخدم")} : {fmt(payslip.employer_cost)}&nbsp;DA', small))
     payment = f'Mode de paiement / {ar("طريقة الدفع")} : {pay[0]}'
     if e.payment_method == 'transfer' and e.iban:
-        payment += f' — {e.bank_name or "Banque"} {e.iban}'
+        payment += f' — {esc(e.bank_name) or "Banque"} {esc(e.iban)}'
     story.append(Paragraph(payment, small))
     story += [Spacer(1, 6 * mm), Paragraph(
         'Document généré par SILAH. Conservez ce bulletin sans limitation de durée. / '

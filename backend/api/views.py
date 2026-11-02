@@ -784,14 +784,15 @@ class EmployeePayItemViewSet(viewsets.ModelViewSet):
         employee = serializer.validated_data.get('employee')
         if employee and employee.company_id != require_company(self.request).id:
             raise ValidationError({'employee': "Ce salarié n'appartient pas à l'entreprise."})
+        action = 'payitem.update' if serializer.instance else 'payitem.create'
         item = serializer.save()
-        audit(self.request, 'payitem.update', f'{item.employee} : {item.label}')
+        audit(self.request, action, f'{item.employee} : {item.label}')
 
     perform_create = _save
     perform_update = _save
 
     def perform_destroy(self, instance):
-        audit(self.request, 'payitem.update', f'{instance.employee} : {instance.label}')
+        audit(self.request, 'payitem.delete', f'{instance.employee} : {instance.label}')
         instance.delete()
 
 

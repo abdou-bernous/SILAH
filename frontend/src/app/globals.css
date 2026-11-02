@@ -45,6 +45,11 @@
   input, select, textarea {
     @apply text-espresso;
   }
+  /* A grid item is as wide as its longest unbreakable line by default, so a single truncated label
+     would push a whole column past a phone screen. */
+  .grid > * {
+    min-width: 0;
+  }
 }
 
 @layer components {

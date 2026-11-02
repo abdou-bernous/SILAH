@@ -51,11 +51,11 @@ export default function PayItemsCard({ employeeId }: { employeeId: number }) {
         )) : <li className="px-5 py-5 text-center text-sm text-muted">{t('pay.none')}</li>}
       </ul>
       <div className="flex flex-wrap gap-2 border-t border-stone p-3">
-        <select className="input min-w-0 flex-1" value={preset} onChange={(e) => setPreset(e.target.value)} aria-label={t('payroll.addPreset')}>
+        <select className="input min-w-0 basis-full sm:basis-auto sm:flex-1" value={preset} onChange={(e) => setPreset(e.target.value)} aria-label={t('payroll.addPreset')}>
           <option value="">{t('payroll.addPreset')}</option>
           {presets?.map((p) => <option key={p.key} value={p.key}>{locale === 'ar' ? p.label_ar : p.label}</option>)}
         </select>
-        <input type="number" min="0" className="input w-32" placeholder={t('exp.amount')} value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <input type="number" min="0" className="input min-w-0 flex-1 sm:w-32 sm:flex-none" placeholder={t('exp.amount')} value={amount} onChange={(e) => setAmount(e.target.value)} />
         <Button variant="outline" onClick={add}>{t('pay.add')}</Button>
       </div>
     </Card>

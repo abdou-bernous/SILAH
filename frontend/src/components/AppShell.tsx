@@ -16,14 +16,15 @@ import { Spinner } from './ui/Card'
 import CompanySwitcher from './CompanySwitcher'
 import LanguageSwitcher from './LanguageSwitcher'
 
-type Item = { href: string; label: TKey; icon: React.ComponentType<{ className?: string }> }
+// `tab` is a shorter label for the phone tab bar, where each entry gets a fifth of the width.
+type Item = { href: string; label: TKey; tab?: TKey; icon: React.ComponentType<{ className?: string }> }
 
 const MAIN: Item[] = [
   { href: '/', label: 'nav.home', icon: HomeIcon },
-  { href: '/bulletins', label: 'nav.payslips', icon: BanknotesIcon },
+  { href: '/bulletins', label: 'nav.payslips', tab: 'nav.payslipsTab', icon: BanknotesIcon },
   { href: '/documents', label: 'nav.documents', icon: FolderIcon },
   { href: '/absences', label: 'nav.leaves', icon: CalendarDaysIcon },
-  { href: '/notes-de-frais', label: 'nav.expenses', icon: ReceiptPercentIcon },
+  { href: '/notes-de-frais', label: 'nav.expenses', tab: 'nav.expensesTab', icon: ReceiptPercentIcon },
   { href: '/profil', label: 'nav.profile', icon: UserCircleIcon },
 ]
 const TEAM: Item[] = [{ href: '/equipe', label: 'nav.team', icon: UserGroupIcon }]
@@ -59,7 +60,7 @@ function TabBar() {
           <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
             className={`flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 text-[10px] ${active ? 'font-medium text-coffee' : 'text-muted'}`}>
             <Icon className="h-5 w-5 shrink-0" />
-            <span className="max-w-full truncate">{t(item.label)}</span>
+            <span className="max-w-full truncate">{t(item.tab ?? item.label)}</span>
           </Link>
         )
       })}
