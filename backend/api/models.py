@@ -1,0 +1,420 @@
+from decimal import Decimal
+
+from django.contrib.auth.models import AbstractUser
+from django.db import models
+
+
+class Company(models.Model):
+    """An employer. One deployment hosts many companies: accountants (cabinets
+    comptables / gestionnaires de paie) manage several of them, HR users manage
+    their own, and the platform admin supervises them without reaching their HR data."""
+
+    name = models.CharField(max_length=200)
+    name_ar = models.CharField('Raison sociale (arabe)', max_length=200, blank=True)
+    sector = models.CharField("Secteur d'activité", max_length=120, blank=True)
+    phone = models.CharField(max_length=30, blank=True)
+    email = models.EmailField(blank=True)
+    is_active = models.BooleanField(default=True)
+    managers = models.ManyToManyField('User', blank=True, related_name='managed_companies')
+    created_by = models.ForeignKey('User', null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name='created_companies')
+    legal_form = models.CharField(max_length=50, blank=True)
+    address = models.CharField(max_length=255, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    nif = models.CharField('NIF', max_length=30, blank=True)
+    nis = models.CharField('NIS', max_length=30, blank=True)
+    rc = models.CharField('Registre du commerce', max_length=30, blank=True)
+    cnas_number = models.CharField('N° employeur CNAS', max_length=30, blank=True)
+    # ISO weekday numbers (Monday=0). Algeria rests on Friday/Saturday.
+    weekend_days = models.JSONField(default=list)
+    annual_leave_days = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal('30'))
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name_plural = 'companies'
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.weekend_days:
+            self.weekend_days = [4, 5]
+        super().save(*args, **kwargs)
+
+
+class User(AbstractUser):
+    class Role(models.TextChoices):
+        EMPLOYEE = 'employee', 'Salarié'
+        MANAGER = 'manager', 'Manager'
+        HR = 'hr', 'Gestionnaire RH'
+        ACCOUNTANT = 'accountant', 'Comptable / gestionnaire de paie'
+        ADMIN = 'admin', 'Administrateur système'
+
+    class MaritalStatus(models.TextChoices):
+        SINGLE = 'single', 'Célibataire'
+        MARRIED = 'married', 'Marié(e)'
+        DIVORCED = 'divorced', 'Divorcé(e)'
+        WIDOWED = 'widowed', 'Veuf / veuve'
+
+    class PaymentMethod(models.TextChoices):
+        TRANSFER = 'transfer', 'Virement'
+        CHEQUE = 'cheque', 'Chèque'
+        CASH = 'cash', 'Espèces'
+
+    class ContractType(models.TextChoices):
+        CDI = 'cdi', 'CDI'
+        CDD = 'cdd', 'CDD'
+        INTERN = 'intern', 'Stage'
+        OTHER = 'other', 'Autre'
+
+    company = models.ForeignKey(Company, null=True, blank=True, on_delete=models.SET_NULL, related_name='employees')
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.EMPLOYEE)
+    manager = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='team')
+
+    employee_number = models.CharField('Matricule', max_length=30, blank=True)
+    job_title = models.CharField('Poste', max_length=120, blank=True)
+    department = models.CharField('Service', max_length=120, blank=True)
+    contract_type = models.CharField(max_length=20, choices=ContractType.choices, default=ContractType.CDI)
+    hire_date = models.DateField(null=True, blank=True)
+    birth_date = models.DateField(null=True, blank=True)
+    social_security_number = models.CharField('N° sécurité sociale', max_length=30, blank=True)
+    # Numéro d'identification nationale: required on the annual G29 return since the 2026 finance law.
+    nin = models.CharField('NIN', max_length=30, blank=True)
+    qualification = models.CharField('Catégorie / échelon', max_length=60, blank=True)
+    marital_status = models.CharField(max_length=20, choices=MaritalStatus.choices, default=MaritalStatus.SINGLE)
+    children_count = models.PositiveSmallIntegerField(default=0)
+    # Disabled workers (and retirees) get the extended IRG smoothing up to 42 500 DA.
+    is_disabled = models.BooleanField('Travailleur handicapé / retraité', default=False)
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.TRANSFER)
+
+    phone = models.CharField(max_length=30, blank=True)
+    address = models.CharField(max_length=255, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    postal_code = models.CharField(max_length=10, blank=True)
+    emergency_contact = models.CharField(max_length=200, blank=True)
+
+    bank_name = models.CharField(max_length=120, blank=True)
+    iban = models.CharField('RIB / IBAN', max_length=40, blank=True)
+
+    base_salary = models.DecimalField('Salaire de base mensuel', max_digits=12, decimal_places=2, default=Decimal('0'))
+
+    @property
+    def is_platform_admin(self):
+        return self.role == self.Role.ADMIN or self.is_superuser
+
+    @property
+    def is_hr(self):
+        """Has HR powers over at least one company (the active one is decided per request).
+
+        The platform admin is a *system* administrator: it manages companies and accounts but
+        does not do payroll or see employee records."""
+        return self.role in (self.Role.HR, self.Role.ACCOUNTANT)
+
+    @property
+    def is_manager(self):
+        return self.role == self.Role.MANAGER
+
+    def __str__(self):
+        return self.get_full_name() or self.username
+
+
+class Payslip(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = 'draft', 'Brouillon'
+        PUBLISHED = 'published', 'Publié'
+        # Still kept as it was issued, but cancelled and replaced by a corrective payslip.
+        REPLACED = 'replaced', 'Remplacé'
+
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='payslips')
+    company = models.ForeignKey(Company, null=True, on_delete=models.SET_NULL, related_name='payslips')
+    year = models.PositiveIntegerField()
+    month = models.PositiveSmallIntegerField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+
+    # Snapshot of the employee at generation time, so an old payslip keeps
+    # showing the job/salary that applied that month.
+    job_title = models.CharField(max_length=120, blank=True)
+    department = models.CharField(max_length=120, blank=True)
+    qualification = models.CharField(max_length=60, blank=True)
+    worked_days = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal('0'))
+    worked_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('173.33'))
+    unpaid_days = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal('0'))
+
+    gross_salary = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    social_contributions = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    taxable_salary = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    income_tax = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    flat_tax = models.DecimalField('IRG 10 % (primes non mensuelles)', max_digits=12, decimal_places=2, default=Decimal('0'))
+    non_taxable = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    net_salary = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    employer_contributions = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    employer_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    viewed_at = models.DateTimeField(null=True, blank=True)
+
+    # A corrective payslip ("annule et remplace") points to the published payslip it replaces once
+    # it is published itself. Until then the original stays the one in force.
+    replaces = models.OneToOneField('self', null=True, blank=True, on_delete=models.PROTECT,
+                                    related_name='replaced_by')
+    correction_reason = models.TextField(blank=True)
+    # The bonuses the payroll run applied to everyone, so that a correction can redo the computation.
+    # None on payslips computed before they were recorded.
+    run_items = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-year', '-month']
+        # Per employee and month: one payslip in force, plus at most one draft (a correction).
+        constraints = [
+            models.UniqueConstraint(fields=['employee', 'year', 'month'], condition=models.Q(status='draft'),
+                                    name='one_draft_payslip_per_month'),
+            models.UniqueConstraint(fields=['employee', 'year', 'month'], condition=models.Q(status='published'),
+                                    name='one_published_payslip_per_month'),
+        ]
+
+    def __str__(self):
+        return f'{self.employee} {self.month:02d}/{self.year}'
+
+
+class PayslipLine(models.Model):
+    class Kind(models.TextChoices):
+        EARNING = 'earning', 'Gain'
+        DEDUCTION = 'deduction', 'Retenue'
+        CONTRIBUTION = 'contribution', 'Cotisation'
+        TAX = 'tax', 'Impôt'
+        NON_TAXABLE = 'non_taxable', 'Indemnité non imposable'
+
+    payslip = models.ForeignKey(Payslip, on_delete=models.CASCADE, related_name='lines')
+    order = models.PositiveIntegerField(default=0)
+    code = models.CharField(max_length=10)
+    label = models.CharField(max_length=150)
+    label_ar = models.CharField(max_length=150, blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    base = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    rate = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    employee_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    employer_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+
+    class Meta:
+        ordering = ['order']
+
+
+class Document(models.Model):
+    class Category(models.TextChoices):
+        CONTRACT = 'contract', 'Contrat & avenants'
+        CERTIFICATE = 'certificate', 'Attestations'
+        PAYROLL = 'payroll', 'Paie & fiscalité'
+        MEDICAL = 'medical', 'Médical'
+        COMPANY = 'company', 'Documents entreprise'
+        OTHER = 'other', 'Autre'
+
+    company = models.ForeignKey(Company, null=True, on_delete=models.CASCADE, related_name='documents')
+    # Null employee = a company-wide document every employee of `company` can see
+    # (règlement intérieur, convention, notes de service...).
+    employee = models.ForeignKey(User, null=True, blank=True, on_delete=models.CASCADE, related_name='documents')
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    file = models.FileField(upload_to='documents/%Y/%m/')
+    uploaded_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL, related_name='uploaded_documents')
+    created_at = models.DateTimeField(auto_now_add=True)
+    viewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
+
+
+class LeaveType(models.TextChoices):
+    ANNUAL = 'annual', 'Congé annuel'
+    RECOVERY = 'recovery', 'Récupération'
+    SICK = 'sick', 'Maladie'
+    EXCEPTIONAL = 'exceptional', 'Absence exceptionnelle'
+    UNPAID = 'unpaid', 'Congé sans solde'
+    REMOTE = 'remote', 'Télétravail'
+
+
+# Leave types that are counted against a yearly balance.
+BALANCED_LEAVE_TYPES = [LeaveType.ANNUAL, LeaveType.RECOVERY]
+
+
+class LeaveBalance(models.Model):
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='leave_balances')
+    leave_type = models.CharField(max_length=20, choices=LeaveType.choices)
+    year = models.PositiveIntegerField()
+    allotted = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal('0'))
+    carried_over = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal('0'))
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['employee', 'leave_type', 'year'], name='unique_leave_balance'),
+        ]
+
+
+class RequestStatus(models.TextChoices):
+    PENDING = 'pending', 'En attente'
+    APPROVED = 'approved', 'Validée'
+    REJECTED = 'rejected', 'Refusée'
+    CANCELLED = 'cancelled', 'Annulée'
+
+
+class LeaveRequest(models.Model):
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='leave_requests')
+    leave_type = models.CharField(max_length=20, choices=LeaveType.choices)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    # Half-day flags: start in the afternoon / end at noon.
+    start_half = models.BooleanField(default=False)
+    end_half = models.BooleanField(default=False)
+    days = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal('0'))
+    reason = models.TextField(blank=True)
+    attachment = models.FileField(upload_to='leaves/%Y/%m/', null=True, blank=True)
+    status = models.CharField(max_length=20, choices=RequestStatus.choices, default=RequestStatus.PENDING)
+    reviewer = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_leaves')
+    review_comment = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-start_date', '-created_at']
+
+
+class ExpenseReport(models.Model):
+    class Category(models.TextChoices):
+        TRANSPORT = 'transport', 'Transport'
+        MEALS = 'meals', 'Repas'
+        LODGING = 'lodging', 'Hébergement'
+        MILEAGE = 'mileage', 'Indemnités kilométriques'
+        SUPPLIES = 'supplies', 'Fournitures'
+        OTHER = 'other', 'Autre'
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'En attente'
+        APPROVED = 'approved', 'Validée'
+        REJECTED = 'rejected', 'Refusée'
+        CANCELLED = 'cancelled', 'Annulée'
+        PAID = 'paid', 'Remboursée'
+
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='expenses')
+    date = models.DateField()
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.CharField(max_length=255)
+    receipt = models.FileField(upload_to='receipts/%Y/%m/', null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Set when the expense is repaid through a payslip; it becomes "paid" once that payslip is published.
+    payslip = models.ForeignKey(Payslip, null=True, blank=True, on_delete=models.SET_NULL, related_name='expenses')
+    reviewer = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_expenses')
+    review_comment = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+
+class ProfileChangeRequest(models.Model):
+    """Sensitive personal data (bank details, address...) is not edited directly:
+    the employee submits the new values and HR applies them on approval."""
+
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='profile_requests')
+    changes = models.JSONField()
+    comment = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=RequestStatus.choices, default=RequestStatus.PENDING)
+    reviewer = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_profile_requests')
+    review_comment = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class EmployeePayItem(models.Model):
+    """A permanent pay element of one employee (IEP, panier, transport...), on every payslip."""
+
+    class Tax(models.TextChoices):
+        SCALE = 'scale', 'Barème mensuel'
+        FLAT = 'flat', 'IRG 10 %'
+        EXEMPT = 'exempt', 'Exonéré'
+
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pay_items')
+    label = models.CharField(max_length=150)
+    label_ar = models.CharField(max_length=150, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    contributory = models.BooleanField(default=True)
+    tax = models.CharField(max_length=10, choices=Tax.choices, default=Tax.SCALE)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['id']
+
+
+class MonthlyVariable(models.Model):
+    """What changes from one month to the next for one employee. Absences come from the leave requests."""
+
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='monthly_variables')
+    year = models.PositiveIntegerField()
+    month = models.PositiveSmallIntegerField()
+    overtime_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0'))
+    # Percentage added to the hourly rate; law 90-11 (art. 32) sets a 50 % minimum.
+    overtime_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50'))
+    bonus_label = models.CharField(max_length=150, blank=True)
+    bonus_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['employee', 'year', 'month'], name='unique_monthly_variable'),
+        ]
+
+
+class CertificateRequest(models.Model):
+    """An employee asks for a certificate; on approval the PDF lands in their document vault."""
+
+    class Kind(models.TextChoices):
+        WORK = 'work', 'Attestation de travail'
+        SALARY = 'salary', 'Attestation de salaire'
+
+    employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='certificate_requests')
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    comment = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=RequestStatus.choices, default=RequestStatus.PENDING)
+    document = models.ForeignKey(Document, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    reviewer = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_certificates')
+    review_comment = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class AuditLog(models.Model):
+    """Who did what, and when, on a company's HR data. The summary names people and
+    fields but never carries amounts or personal values."""
+
+    company = models.ForeignKey(Company, null=True, on_delete=models.SET_NULL, related_name='audit_logs')
+    actor = models.ForeignKey(User, null=True, on_delete=models.SET_NULL, related_name='audit_logs')
+    # Kept as text so the trail survives the deletion of the account.
+    actor_name = models.CharField(max_length=200)
+    action = models.CharField(max_length=40)
+    summary = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+
+class Notification(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    title = models.CharField(max_length=200)
+    message = models.TextField(blank=True)
+    link = models.CharField(max_length=200, blank=True)
+    read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
