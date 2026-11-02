@@ -5,6 +5,9 @@ comptable prépare la paie de une ou plusieurs entreprises, et où l'administrat
 plateforme. L'interface est disponible en **français et en arabe** (mise en page de droite à gauche), et les
 bulletins suivent la **réglementation algérienne**. Le design est volontairement doux (tons cappuccino et gris clair).
 
+**Guide d'utilisation, rôle par rôle : [docs/guide-utilisateur.md](docs/guide-utilisateur.md)**, tenu à jour à
+chaque modification visible (voir [CLAUDE.md](CLAUDE.md)).
+
 ## Rôles
 
 | Rôle | Ce qu'il fait |
