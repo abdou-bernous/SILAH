@@ -236,6 +236,8 @@ export interface PayrollTotals {
   cnas: string | null
   cnas_employer: string | null
   count: number
+  /** Drafts included in the figures (only on the month summary): they stay provisional until published. */
+  drafts?: number
 }
 
 export interface CompanyAdmin extends Company {
@@ -250,6 +252,7 @@ export interface CompanyOverview extends CompanyAdmin {
   pending_leaves: number
   pending_expenses: number
   pending_profile: number
+  pending_certificates: number
   absent_today: number
 }
 

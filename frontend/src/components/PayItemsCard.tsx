@@ -13,7 +13,9 @@ import Button from './ui/Button'
 export default function PayItemsCard({ employeeId }: { employeeId: number }) {
   const { t, locale } = useI18n()
   const { data, reload } = useFetch<PayItem[]>(`/pay-items/?employee=${employeeId}`)
-  const { data: presets } = useFetch<Preset[]>('/payslips/presets/')
+  const { data: allPresets } = useFetch<Preset[]>('/payslips/presets/')
+  // Bonuses taxed at 10 % (PRC, arrears) are not paid every month: they belong to a payroll run.
+  const presets = allPresets?.filter((p) => p.tax !== 'flat')
   const [preset, setPreset] = useState('')
   const [amount, setAmount] = useState('')
   const [error, setError] = useState('')

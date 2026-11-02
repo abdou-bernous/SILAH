@@ -15,7 +15,8 @@ import { HrOnly } from '@/components/AppShell'
 export default function ProfileRequestsPage() {
   const { t, tx } = useI18n()
   const [showAll, setShowAll] = useState(false)
-  const { data, loading, reload } = useFetch<ProfileRequest[]>(`/profile-requests/?scope=all${showAll ? '' : '&status=pending'}`)
+  // scope=team: one's own requests are decided by another HR user or the accountant.
+  const { data, loading, reload } = useFetch<ProfileRequest[]>(`/profile-requests/?scope=team${showAll ? '' : '&status=pending'}`)
   const [review, setReview] = useState<{ r: ProfileRequest; decision: 'approve' | 'reject' } | null>(null)
   const certificates = useFetch<CertificateRequest[]>('/certificates/?scope=team&status=pending')
   const [certReview, setCertReview] = useState<{ c: CertificateRequest; decision: 'approve' | 'reject' } | null>(null)

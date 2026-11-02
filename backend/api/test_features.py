@@ -67,7 +67,7 @@ class MonthlyVariableTests(TwoCompaniesTestCase):
 
     def test_overtime_and_bonus_reach_the_payslip(self):
         r = self.save([{'employee': self.emp.id, 'overtime_hours': '10', 'bonus_label': 'Prime projet', 'bonus_amount': '2000'}])
-        self.assertEqual(r.status_code, 204, getattr(r, 'data', None))
+        self.assertEqual((r.status_code, r.data), (200, {'already_published': []}))
         self.client_for(self.hr).post('/api/payslips/run/', {'year': 2026, 'month': 10}, format='json')
         p = Payslip.objects.get(employee=self.emp)
         self.assertEqual(p.gross_salary, Decimal('56327.01'))
@@ -182,6 +182,11 @@ class AbsenceForEmployeeTests(TwoCompaniesTestCase):
 
 
 class CertificateTests(TwoCompaniesTestCase):
+    def setUp(self):
+        super().setUp()
+        self.emp.hire_date, self.emp.job_title = date(2022, 1, 10), 'Commercial'
+        self.emp.save()
+
     def ask(self, kind='work', user=None):
         return self.client_for(user or self.emp).post('/api/certificates/', {'kind': kind}, format='json')
 

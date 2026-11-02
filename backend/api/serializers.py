@@ -19,6 +19,34 @@ SELF_EDITABLE_FIELDS = ['phone', 'emergency_contact']
 REQUESTABLE_FIELDS = ['first_name', 'last_name', 'address', 'city', 'postal_code',
                       'bank_name', 'iban', 'social_security_number', 'nin', 'birth_date',
                       'marital_status', 'children_count']
+FIELD_LABELS = {
+    'first_name': 'Prénom', 'last_name': 'Nom', 'address': 'Adresse', 'city': 'Ville', 'postal_code': 'Code postal',
+    'bank_name': 'Banque', 'iban': 'RIB / IBAN', 'social_security_number': 'N° de sécurité sociale', 'nin': 'NIN',
+    'birth_date': 'Date de naissance', 'marital_status': 'Situation familiale', 'children_count': "Nombre d'enfants",
+}
+MAX_CHILDREN = 30
+# Below this age a birth date is a typing mistake (the legal minimum age to be hired is 16, apprentices aside).
+MIN_EMPLOYEE_AGE = 15
+
+
+def field_value(user, field):
+    """A record value as the change requests store it: text, '' when empty, ISO dates, 0 kept as '0'."""
+    value = getattr(user, field)
+    if value is None:
+        return ''
+    return value.isoformat() if isinstance(value, date) else str(value)
+
+
+def check_birth_date(value):
+    if value is None:
+        return value
+    today = date.today()
+    if value > today:
+        raise serializers.ValidationError('La date de naissance ne peut pas être dans le futur.')
+    age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+    if value.year < 1900 or age < MIN_EMPLOYEE_AGE:
+        raise serializers.ValidationError('Date de naissance invalide : vérifiez l\'année.')
+    return value
 
 
 def validate_upload(file):
@@ -209,7 +237,12 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def validate_children_count(self, value):
         if value < 0:
             raise serializers.ValidationError("Le nombre d'enfants ne peut pas être négatif.")
+        if value > MAX_CHILDREN:
+            raise serializers.ValidationError("Nombre d'enfants invalide.")
         return value
+
+    def validate_birth_date(self, value):
+        return check_birth_date(value)
 
     def validate(self, attrs):
         request = self.context.get('request')
@@ -435,6 +468,11 @@ class ExpenseSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Le montant doit être positif.')
         return value
 
+    def validate_date(self, value):
+        if value > date.today():
+            raise serializers.ValidationError('Une dépense ne peut pas être datée dans le futur.')
+        return value
+
     def validate_receipt(self, value):
         return validate_upload(value)
 
@@ -451,25 +489,44 @@ class ProfileChangeRequestSerializer(serializers.ModelSerializer):
         read_only_fields = ['status', 'review_comment', 'reviewed_at', 'created_at']
 
     def get_current_values(self, obj):
-        return {k: str(getattr(obj.employee, k) or '') for k in obj.changes if k in REQUESTABLE_FIELDS}
+        return {k: field_value(obj.employee, k) for k in obj.changes if k in REQUESTABLE_FIELDS}
 
     def validate_changes(self, value):
+        """Checked as the employee record would check them, so that an approval can never fail later."""
         if not isinstance(value, dict) or not value:
             raise serializers.ValidationError('Indiquez au moins une modification.')
         unknown = set(value) - set(REQUESTABLE_FIELDS)
         if unknown:
             raise serializers.ValidationError(f"Champs non modifiables : {', '.join(sorted(unknown))}")
-        cleaned = {k: str(v).strip() for k, v in value.items()}
+        cleaned = {k: '' if v is None else str(v).strip() for k, v in value.items()}
+        for k, v in cleaned.items():
+            limit = User._meta.get_field(k).max_length
+            if limit and len(v) > limit:
+                raise serializers.ValidationError(f'{FIELD_LABELS[k]} : {limit} caractères au maximum.')
+        for k in ('first_name', 'last_name'):
+            if k in cleaned and not cleaned[k]:
+                raise serializers.ValidationError(f'{FIELD_LABELS[k]} : ce champ ne peut pas être vide.')
         if 'marital_status' in cleaned and cleaned['marital_status'] not in User.MaritalStatus.values:
             raise serializers.ValidationError('Situation familiale invalide.')
-        if 'children_count' in cleaned and not cleaned['children_count'].isdigit():
-            raise serializers.ValidationError("Nombre d'enfants invalide.")
+        if 'children_count' in cleaned:
+            if not cleaned['children_count'].isdigit() or int(cleaned['children_count']) > MAX_CHILDREN:
+                raise serializers.ValidationError("Nombre d'enfants invalide.")
+            cleaned['children_count'] = str(int(cleaned['children_count']))
         if cleaned.get('birth_date'):
             try:
-                date.fromisoformat(cleaned['birth_date'])
+                check_birth_date(date.fromisoformat(cleaned['birth_date']))
             except ValueError:
                 raise serializers.ValidationError('Date de naissance invalide.')
         return cleaned
+
+    def validate(self, attrs):
+        # Only what really changes: a request that would change nothing is refused.
+        user = self.context['request'].user
+        changes = {k: v for k, v in attrs['changes'].items() if v != field_value(user, k)}
+        if not changes:
+            raise serializers.ValidationError({'changes': 'Aucune valeur ne change par rapport à votre dossier.'})
+        attrs['changes'] = changes
+        return attrs
 
 
 class ReviewSerializer(serializers.Serializer):
@@ -481,6 +538,14 @@ class EmployeePayItemSerializer(serializers.ModelSerializer):
         model = EmployeePayItem
         fields = ['id', 'employee', 'label', 'label_ar', 'amount', 'contributory', 'tax', 'is_active']
         extra_kwargs = {'amount': {'min_value': 0}}
+
+    def validate_tax(self, value):
+        # The 10 % withholding is for bonuses that are not paid every month (PRC, arrears): a permanent
+        # item comes back on every payslip, so it is taxed on the monthly scale.
+        if value == EmployeePayItem.Tax.FLAT:
+            raise serializers.ValidationError("L'IRG à 10 % est réservé aux primes non mensuelles : une rubrique "
+                                              "permanente revient chaque mois, elle suit le barème.")
+        return value
 
 
 class MonthlyVariableRowSerializer(serializers.Serializer):

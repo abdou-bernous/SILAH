@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowDownTrayIcon, CalculatorIcon, PaperAirplaneIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
@@ -32,6 +32,9 @@ export default function PayrollPage() {
   const [correcting, setCorrecting] = useState<PayslipSummary | null>(null)
   const { data, loading, reload } = useFetch<PayslipSummary[]>(`/payslips/?scope=all&year=${year}&month=${month}`)
   const { data: summary, reload: reloadSummary } = useFetch<PayrollTotals>(`/payslips/summary/?year=${year}&month=${month}`)
+
+  // The result of a run belongs to its month: it must not stay on screen once another month is shown.
+  useEffect(() => { setMsg(null) }, [year, month])
 
   // Corrections are published one by one, from their own page.
   const drafts = data?.filter((p) => p.status === 'draft' && p.replaces === null) || []
@@ -67,10 +70,14 @@ export default function PayrollPage() {
     } catch (err) { setMsg({ tone: 'rose', text: errorMessage(err) }) } finally { setBusy(false) }
   }
 
-  const publish = async (p: PayslipSummary) => { await api.post(`/payslips/${p.id}/publish/`); refresh() }
+  const publish = async (p: PayslipSummary) => {
+    try { await api.post(`/payslips/${p.id}/publish/`) } catch (err) { setMsg({ tone: 'rose', text: errorMessage(err) }) }
+    refresh()
+  }
   const remove = async (p: PayslipSummary) => {
     if (!confirm(t('payroll.confirmDelete'))) return
-    await api.delete(`/payslips/${p.id}/`); refresh()
+    try { await api.delete(`/payslips/${p.id}/`) } catch (err) { setMsg({ tone: 'rose', text: errorMessage(err) }) }
+    refresh()
   }
 
   const irgTotal = summary ? Number(summary.irg || 0) + Number(summary.irg_flat || 0) : 0
@@ -119,6 +126,9 @@ export default function PayrollPage() {
                 <Stat label={t('payroll.costTotal')} value={money(summary.cost)} />
               </div>
               <Card title={t('payroll.declarations')}>
+                {!!summary.drafts && (
+                  <p className="border-b border-stone bg-honey/50 px-5 py-2.5 text-xs">{t('payroll.provisional', { n: summary.drafts })}</p>
+                )}
                 <div className="grid gap-4 p-5 text-sm sm:grid-cols-2">
                   <div className="rounded-xl bg-sand/70 p-4">
                     <p className="font-semibold">{t('payroll.g50')}</p>

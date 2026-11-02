@@ -50,7 +50,13 @@ travaillent plus, l'historique restant conservé.
   l'original, qui reste archivé avec la mention « remplacé ». L'écart de net est affiché et le salarié est
   prévenu ; les totaux G50 et CNAS ne comptent que la version en vigueur
 - Dépôt de documents dans le coffre-fort d'un salarié ou pour toute l'entreprise
-- Traitement des demandes de modification de dossier, remboursement des notes de frais
+- Traitement des demandes de modification de dossier et d'attestation, remboursement des notes de frais.
+  Les compteurs de l'accueil correspondent exactement aux listes à traiter ; une demande du RH est traitée par
+  un autre RH ou le comptable (le seul RH d'une entreprise sans comptable voit ses propres demandes validées
+  d'office, avec une trace au journal) ; une attestation n'est délivrée que si la fiche du salarié est complète
+- Absence sans solde validée, saisie ou annulée sur un mois déjà calculé : les RH sont prévenus (bulletin à
+  corriger ou brouillon à recalculer) ; variables saisies pour un salarié déjà payé : l'écran le signale
+- Départ d'un salarié : ses demandes en attente et ses absences à venir sont annulées
 - Paramètres de l'entreprise : identité (NIF, NIS, RC, CNAS), jours de repos hebdomadaire, congé annuel
 
 ## Paie algérienne
@@ -65,7 +71,12 @@ Moteur de paie pour salariés mensualisés (`backend/api/payroll.py`), règles v
 - **IRG 10 % libératoire** pour les primes non mensuelles (PRC / PRI trimestrielles, rappels)
 - rubriques prêtes à l'emploi : PRI, PRC, IEP, heures supplémentaires, nuisance, panier et transport (non soumis
   CNAS, imposables), allocations familiales et prime de scolarité (exonérées), ou rubrique libre
-- absences non rémunérées valorisées sur 22 jours ouvrés, heures travaillées proratisées
+- absences non rémunérées valorisées sur 22 jours ouvrés, heures travaillées proratisées ; aucun salaire de base
+  quand l'absence couvre tous les jours ouvrés du mois
+- **entrée en cours de mois** : les jours ouvrés avant la date d'embauche sont retenus au même taux, et aucun
+  bulletin n'est calculé pour un mois antérieur à l'embauche
+- heures supplémentaires au-delà de 20 % de la durée légale (34,67 h par mois) signalées au calcul
+- l'IRG à 10 % est réservé aux primes de la paie du mois : une rubrique permanente suit le barème
 - totaux mensuels pour la **déclaration G50** (IRG) et le versement **CNAS** affichés sur l'écran Paie
 - bulletin et PDF **bilingues français / arabe** avec NIF, NIS, RC, n° employeur CNAS, NIN, n° SS, catégorie,
   situation familiale et mode de paiement
@@ -155,9 +166,11 @@ cd backend && python manage.py test               # paie, droits par rôle, cloi
 cd frontend && npm test && npx tsc --noEmit && npm run build
 ```
 
-- Backend : moteur de paie (IRG, CNAS, cas limites), matrice « qui peut appeler quoi » pour chaque rôle,
-  cloisonnement entre entreprises, entreprise désactivée, protections contre l'auto-verrouillage (un RH ou
-  un admin ne peut pas retirer ses propres droits).
+- Backend : moteur de paie (IRG, CNAS, cas limites, invariants vérifiés sur des milliers de bulletins tirés au
+  hasard), matrice « qui peut appeler quoi » pour chaque rôle, cloisonnement entre entreprises, entreprise
+  désactivée, protections contre l'auto-verrouillage, demandes à traiter (`test_requests.py` : compteurs =
+  listes, valeurs vérifiées avant validation, attestations, départs) et règles de paie
+  (`test_payroll_rules.py` : embauche en cours de mois, absences, variables après publication).
 - Frontend (Vitest) : chaque texte existe en français et en arabe avec les mêmes variables, chaque clé utilisée
   par un écran existe, pas de clé inutilisée, formatage des montants, dates et mois algériens.
 

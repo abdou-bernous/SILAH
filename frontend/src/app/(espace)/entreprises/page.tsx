@@ -102,7 +102,7 @@ export default function CompaniesPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {data.map((c) => {
-            const pending = c.pending_leaves + c.pending_expenses + c.pending_profile
+            const pending = c.pending_leaves + c.pending_expenses + c.pending_profile + c.pending_certificates
             return (
               <Card key={c.id} className={c.is_active ? '' : 'opacity-70'}>
                 <div className="flex items-start justify-between gap-3 border-b border-stone p-5">
@@ -132,6 +132,7 @@ export default function CompaniesPage() {
                   {c.pending_leaves > 0 && <Badge tone="mist">{t('home.toReview.leaves', { n: c.pending_leaves })}</Badge>}
                   {c.pending_expenses > 0 && <Badge tone="mist">{t('home.toReview.expenses', { n: c.pending_expenses })}</Badge>}
                   {c.pending_profile > 0 && <Badge tone="mist">{t('home.toReview.profile', { n: c.pending_profile })}</Badge>}
+                  {c.pending_certificates > 0 && <Badge tone="mist">{t('home.toReview.certificates', { n: c.pending_certificates })}</Badge>}
                   {c.absent_today > 0 && <Badge tone="neutral">{t('firms.absentToday', { n: c.absent_today })}</Badge>}
                 </div>
                 {c.managers.length > 0 && (

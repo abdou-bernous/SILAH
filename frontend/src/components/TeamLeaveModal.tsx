@@ -13,7 +13,11 @@ import Modal from './ui/Modal'
 type Person = { id: number; full_name: string; manager: number | null }
 
 /** A manager or HR records an absence for a colleague; it is approved at once. */
-export default function TeamLeaveModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+export default function TeamLeaveModal({ onClose, onCreated }: {
+  onClose: () => void
+  /** `payrollWarnings`: an unpaid absence on a month whose payroll is already computed. */
+  onCreated: (payrollWarnings: string[]) => void
+}) {
   const { user } = useAuth()
   const { t, tx } = useI18n()
   const { data: directory } = useFetch<Person[]>('/employees/directory/')
@@ -27,8 +31,8 @@ export default function TeamLeaveModal({ onClose, onCreated }: { onClose: () => 
     e.preventDefault()
     setSaving(true); setError('')
     try {
-      await api.post('/leaves/for_employee/', { ...form, employee: Number(form.employee) })
-      onCreated()
+      const r = await api.post('/leaves/for_employee/', { ...form, employee: Number(form.employee) })
+      onCreated(r.data?.payroll_warnings || [])
       onClose()
     } catch (err) { setError(errorMessage(err)) } finally { setSaving(false) }
   }

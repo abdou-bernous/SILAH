@@ -24,7 +24,7 @@ interface Dashboard {
   recent_documents: DocumentItem[]
   pending_requests: { leaves: number; expenses: number; profile: number }
   unread_notifications: number
-  to_review: { leaves?: number; expenses?: number; profile_requests?: number }
+  to_review: { leaves?: number; expenses?: number; profile_requests?: number; certificates?: number }
 }
 
 export default function DashboardPage() {
@@ -40,7 +40,8 @@ export default function DashboardPage() {
   if (redirect || loading || !data) return <Spinner />
   const p = data.last_payslip
   const review = data.to_review
-  const reviewTotal = (review.leaves || 0) + (review.expenses || 0) + (review.profile_requests || 0)
+  const hrRequests = (review.profile_requests || 0) + (review.certificates || 0)
+  const reviewTotal = (review.leaves || 0) + (review.expenses || 0) + hrRequests
   const h = new Date().getHours()
 
   return (
@@ -53,7 +54,7 @@ export default function DashboardPage() {
       </div>
 
       {reviewTotal > 0 && (
-        <Link href={review.profile_requests && !review.leaves && !review.expenses ? '/admin/demandes' : '/equipe'}
+        <Link href={hrRequests && !review.leaves && !review.expenses ? '/admin/demandes' : '/equipe'}
           className="flex items-center justify-between gap-4 rounded-2xl border border-latte bg-honey/60 px-5 py-4 text-sm hover:bg-honey">
           <span>
             <strong className="font-semibold">{t('home.toReview', { n: reviewTotal })}</strong>
@@ -61,6 +62,7 @@ export default function DashboardPage() {
               review.leaves ? t('home.toReview.leaves', { n: review.leaves }) : '',
               review.expenses ? t('home.toReview.expenses', { n: review.expenses }) : '',
               review.profile_requests ? t('home.toReview.profile', { n: review.profile_requests }) : '',
+              review.certificates ? t('home.toReview.certificates', { n: review.certificates }) : '',
             ].filter(Boolean).join(t('common.listSep'))}</span>
           </span>
           <ArrowRightIcon className="h-4 w-4 shrink-0 rtl:rotate-180" />

@@ -16,6 +16,8 @@ Rules implemented (checked against public 2026 sources, see README):
     withholding on their amount net of CNAS, outside the monthly scale.
   - Allowances excluded from the CNAS base but taxable (panier, transport) and fully
     exempt ones (allocations familiales, prime de scolarité) are supported through flags.
+  - Unpaid days (unpaid leave, days before a mid-month hire) are valued at base / 22; nothing of
+    the base salary is due when they cover every working day of the month.
 
 Special sectors (CACOBATPH +0.375 %), CNAC hiring reductions and other regimes are not
 covered. Rates live in one place below so they can be adjusted.
@@ -56,6 +58,8 @@ CENT = Decimal('0.01')
 
 # Law 90-11, art. 32: overtime pays at least 50 % more than the normal hourly rate.
 OVERTIME_MIN_RATE = Decimal('50')
+# Overtime is capped at 20 % of the legal working time, unless an exemption was granted.
+OVERTIME_MONTHLY_LIMIT = (MONTHLY_HOURS * Decimal('0.20')).quantize(Decimal('0.01'))
 
 
 def money(value) -> Decimal:
@@ -145,9 +149,11 @@ class PayslipResult:
     employer_cost: Decimal = Decimal('0')
 
 
-def compute_payslip(base_salary, bonuses=(), unpaid_days=0, disabled=False) -> PayslipResult:
+def compute_payslip(base_salary, bonuses=(), unpaid_days=0, disabled=False, days_before_hire=0,
+                    working_days=None) -> PayslipResult:
+    """`unpaid_days` and `days_before_hire` are working days without pay; `working_days` is the number of
+    working days of the month, so that a month without any day worked pays no base salary at all."""
     base_salary = money(base_salary)
-    unpaid_days = Decimal(unpaid_days)
     r = PayslipResult()
     if 0 < base_salary < SNMG:
         r.warnings.append(f'Salaire de base inférieur au SNMG ({SNMG} DA) : vérifiez le temps de travail.')
@@ -181,11 +187,22 @@ def compute_payslip(base_salary, bonuses=(), unpaid_days=0, disabled=False) -> P
         else:  # exempt from IRG but contributory: still in gross and CNAS base
             exempt += amount
 
-    if unpaid_days > 0:
+    absences = [(code, label, label_ar, Decimal(days)) for code, label, label_ar, days in [
+        ('R180', 'Entrée en cours de mois', 'التوظيف خلال الشهر', days_before_hire),
+        ('R190', 'Absence non rémunérée', 'غياب غير مدفوع الأجر', unpaid_days),
+    ] if Decimal(days) > 0]
+    if absences:
         daily = base_salary / WORKING_DAYS_PER_MONTH
-        deduction = money(min(daily * unpaid_days, base_salary))
-        r.lines.append(Line('R190', 'Absence non rémunérée', 'غياب غير مدفوع الأجر', 'deduction', -deduction,
-                            base=unpaid_days, rate=money(daily)))
+        days_off = sum(days for *_, days in absences)
+        if working_days and days_off >= working_days:
+            deduction = base_salary
+        else:
+            deduction = money(min(daily * days_off, base_salary))
+        left = deduction
+        for i, (code, label, label_ar, days) in enumerate(absences):
+            amount = left if i == len(absences) - 1 else money(deduction * days / days_off)
+            left -= amount
+            r.lines.append(Line(code, label, label_ar, 'deduction', -amount, base=days, rate=money(daily)))
         contributory -= deduction
         scale_items -= deduction
 

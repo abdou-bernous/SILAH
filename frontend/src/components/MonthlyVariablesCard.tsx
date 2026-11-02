@@ -13,7 +13,7 @@ export default function MonthlyVariablesCard({ year, month }: { year: number; mo
   const { t } = useI18n()
   const { data } = useFetch<MonthlyVariableRow[]>(`/payslips/variables/?year=${year}&month=${month}`)
   const [rows, setRows] = useState<MonthlyVariableRow[]>([])
-  const [msg, setMsg] = useState<{ tone: 'sage' | 'rose'; text: string } | null>(null)
+  const [msg, setMsg] = useState<{ tone: 'sage' | 'rose' | 'honey'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => { setRows(data || []); setMsg(null) }, [data])
@@ -24,8 +24,12 @@ export default function MonthlyVariablesCard({ year, month }: { year: number; mo
   const save = async () => {
     setSaving(true); setMsg(null)
     try {
-      await api.post('/payslips/variables/', { year, month, rows: rows.map(({ full_name: _, ...r }) => r) })
-      setMsg({ tone: 'sage', text: t('payroll.varsSaved') })
+      const r = await api.post('/payslips/variables/', { year, month, rows: rows.map(({ full_name: _, ...r }) => r) })
+      // Someone already paid this month only gets the change through a corrective payslip.
+      const paid: string[] = r.data?.already_published || []
+      setMsg(paid.length
+        ? { tone: 'honey', text: t('payroll.varsAfterPublish', { names: paid.join(t('common.listSep')) }) }
+        : { tone: 'sage', text: t('payroll.varsSaved') })
     } catch (err) { setMsg({ tone: 'rose', text: errorMessage(err) }) } finally { setSaving(false) }
   }
 

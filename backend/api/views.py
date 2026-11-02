@@ -1,6 +1,6 @@
 import calendar
 import logging
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.conf import settings
@@ -72,11 +72,119 @@ def audit(request, action, summary='', company=None):
                             actor_name=str(request.user), action=action, summary=summary[:255])
 
 
+def hr_reviewers_for(employee):
+    """Who handles requests only HR can decide (records, certificates): HR and accountants, never oneself."""
+    return [u for u in hr_recipients(employee.company) if u.id != employee.id]
+
+
 def reviewers_for(employee):
-    """Who gets told about a new request: the manager, or the company's HR / accountants."""
+    """Who gets told about a new absence or expense: the manager, or the company's HR / accountants."""
     if employee.manager and employee.manager.is_active:
         return [employee.manager]
-    return [u for u in hr_recipients(employee.company) if u.id != employee.id]
+    return hr_reviewers_for(employee)
+
+
+SOLE_REVIEWER_NOTE = "Validée automatiquement : aucun autre valideur dans l'entreprise."
+
+
+def decides_alone(user, reviewers):
+    """The only HR user of a company, with no manager and no accountant, has nobody to review their own
+    requests: rather than waiting forever, they are approved at once and the journal says so."""
+    return user.role == User.Role.HR and not reviewers
+
+
+def of_month(year, month):
+    """"de mars 2026", but "d'octobre 2026"."""
+    period = month_label(year, month).lower()
+    return f"d'{period}" if period[0] in 'aeiouy' else f'de {period}'
+
+
+def months_between(start, end):
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        yield y, m
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+
+
+def payroll_impact(lr):
+    """Unpaid leave changes the pay of its months. When one of them is already computed, say what to redo."""
+    if lr.leave_type != LeaveType.UNPAID:
+        return []
+    found = []
+    weekend = lr.employee.company.weekend_days
+    for y, m in months_between(lr.start_date, lr.end_date):
+        if not payroll.overlap_days(lr.start_date, lr.end_date, y, m, weekend, lr.start_half, lr.end_half):
+            continue   # only rest days fall in this month: its pay does not change
+        month = in_force(Payslip.objects.filter(employee=lr.employee, year=y, month=m))
+        published = month.filter(status=Payslip.Status.PUBLISHED).first()
+        if published:
+            found.append((f'Le bulletin {of_month(y, m)} est déjà publié : corrigez-le pour tenir compte de cette absence.',
+                          f'/bulletins/{published.id}'))
+        elif month.filter(status=Payslip.Status.DRAFT).exists():
+            found.append((f'La paie {of_month(y, m)} est en brouillon : relancez le calcul pour tenir compte de cette absence.',
+                          '/admin/paie'))
+    return found
+
+
+def warn_payroll(lr, what):
+    """Tell the payroll managers that an unpaid leave changed after its month was computed."""
+    found = payroll_impact(lr)
+    for message, link in found:
+        for u in hr_recipients(lr.employee.company):
+            notify(u, f'Absence sans solde {what} : paie à revoir pour {lr.employee}', message, link)
+    return [message for message, _ in found]
+
+
+def cancel_open_requests(emp):
+    """When someone leaves: what was still waiting, and absences planned after today, are cancelled."""
+    leaves = LeaveRequest.objects.filter(employee=emp).filter(
+        Q(status=RequestStatus.PENDING) | Q(status=RequestStatus.APPROVED, start_date__gt=date.today()))
+    return (leaves.update(status=RequestStatus.CANCELLED)
+            + ProfileChangeRequest.objects.filter(employee=emp, status=RequestStatus.PENDING).update(
+                status=RequestStatus.CANCELLED)
+            + CertificateRequest.objects.filter(employee=emp, status=RequestStatus.PENDING).update(
+                status=RequestStatus.CANCELLED))
+
+
+def apply_profile_changes(emp, changes):
+    for field, value in changes.items():
+        if field not in REQUESTABLE_FIELDS:
+            continue
+        if field == 'birth_date':
+            value = date.fromisoformat(value) if value else None
+        elif field == 'children_count':
+            value = int(value or 0)
+        setattr(emp, field, value)
+    emp.save()
+
+
+def check_certificate(req):
+    """A certificate is an official document: refuse to issue one that would print blanks or false facts."""
+    e = req.employee
+    if not e.is_active:
+        raise ValidationError("Ce salarié a quitté l'entreprise : l'attestation ne peut plus être délivrée.")
+    missing = [label for label, ok in [("date d'embauche", e.hire_date), ('poste', e.job_title),
+                                       ('salaire de base', req.kind != CertificateRequest.Kind.SALARY or e.base_salary > 0)]
+               if not ok]
+    if missing:
+        raise ValidationError(f"Fiche du salarié incomplète pour cette attestation : {', '.join(missing)}. "
+                              f"Complétez-la, puis délivrez l'attestation.")
+    if e.hire_date > date.today():
+        raise ValidationError(f"L'embauche prend effet le {e.hire_date:%d/%m/%Y} : "
+                              f"l'attestation ne peut pas être délivrée avant.")
+
+
+def issue_certificate(req, reviewer, comment=''):
+    check_certificate(req)
+    emp = req.employee
+    pdf = render_certificate(req, date.today())
+    title = f'{req.get_kind_display()} — {date.today():%d/%m/%Y}'
+    doc = Document(company=emp.company, employee=emp, category=Document.Category.CERTIFICATE,
+                   title=title, uploaded_by=reviewer)
+    doc.file.save(f'{req.kind}_{emp.username}.pdf', ContentFile(pdf), save=True)
+    req.document = doc
+    mark_reviewed(req, reviewer, RequestStatus.APPROVED, comment)
+    notify(emp, 'Votre attestation est disponible', title, '/documents', email=True)
 
 
 def employee_bonuses(emp, year, month):
@@ -142,6 +250,14 @@ def run_items_of(p):
     return p.run_items if p.run_items is not None else legacy_run_items(p)
 
 
+def variable_key(v):
+    """What a monthly grid row changes on the payslip (a rate without hours, or a label without amount, changes nothing)."""
+    get = (lambda k: v.get(k)) if isinstance(v, dict) else (lambda k: getattr(v, k, None))
+    hours, amount = Decimal(get('overtime_hours') or 0), Decimal(get('bonus_amount') or 0)
+    return (hours, Decimal(get('overtime_rate') or 0) if hours else None, amount,
+            (get('bonus_label') or '') if amount else '')
+
+
 def in_force(qs):
     """The payslips that count for a month: replaced ones and corrections not yet published are left out."""
     return qs.exclude(status=Payslip.Status.REPLACED).exclude(status=Payslip.Status.DRAFT, replaces__isnull=False)
@@ -152,24 +268,37 @@ def compute_payslip_for(emp, company, year, month, run_items, expenses, payslip=
     Returns the payslip and the engine's warnings."""
     first, last = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
     weekend = company.weekend_days
+    working = payroll.working_days_in_month(year, month, weekend)
     unpaid = Decimal('0')
     for lr in LeaveRequest.objects.filter(employee=emp, leave_type=LeaveType.UNPAID, status=RequestStatus.APPROVED,
                                           start_date__lte=last, end_date__gte=first):
         unpaid += payroll.overlap_days(lr.start_date, lr.end_date, year, month, weekend, lr.start_half, lr.end_half)
+    # Hired during the month: the days before the start are not paid.
+    before_hire = Decimal('0')
+    if emp.hire_date and first < emp.hire_date <= last:
+        before_hire = payroll.count_leave_days(first, emp.hire_date - timedelta(days=1), weekend)
     items = bonuses_from_dicts(run_items) + employee_bonuses(emp, year, month)
     if expenses:
         items.append(payroll.Bonus(EXPENSES_LABEL, sum(e.amount for e in expenses), contributory=False, tax='exempt',
                                    label_ar='تسديد المصاريف'))
-    result = payroll.compute_payslip(emp.base_salary, items, unpaid, disabled=emp.is_disabled)
+    result = payroll.compute_payslip(emp.base_salary, items, unpaid, disabled=emp.is_disabled,
+                                     days_before_hire=before_hire, working_days=working)
+    warnings = list(result.warnings)
+    if before_hire:
+        warnings.append(f'Entrée le {emp.hire_date:%d/%m/%Y} : salaire de base réduit de {before_hire} jour(s) '
+                        f'ouvré(s) non travaillé(s).')
+    variable = MonthlyVariable.objects.filter(employee=emp, year=year, month=month).first()
+    if variable and variable.overtime_hours > payroll.OVERTIME_MONTHLY_LIMIT:
+        warnings.append(f'{variable.overtime_hours} h supplémentaires : au-delà de {payroll.OVERTIME_MONTHLY_LIMIT} h '
+                        f'par mois (20 % de la durée légale), une dérogation est nécessaire.')
 
     p = payslip or Payslip(employee=emp, year=year, month=month)
     p.company = company
     p.run_items = run_items
     p.job_title, p.department, p.qualification = emp.job_title, emp.department, emp.qualification
     p.unpaid_days = unpaid
-    working = payroll.working_days_in_month(year, month, weekend)
-    p.worked_days = max(working - unpaid, Decimal('0'))
-    p.worked_hours = payroll.MONTHLY_HOURS if not unpaid else payroll.money(
+    p.worked_days = max(working - unpaid - before_hire, Decimal('0'))
+    p.worked_hours = payroll.MONTHLY_HOURS if not (unpaid or before_hire) else payroll.money(
         payroll.MONTHLY_HOURS * p.worked_days / working) if working else Decimal('0')
     for f in ['gross_salary', 'social_contributions', 'taxable_salary', 'income_tax', 'flat_tax',
               'non_taxable', 'net_salary', 'employer_contributions', 'employer_cost']:
@@ -184,7 +313,7 @@ def compute_payslip_for(emp, company, year, month, run_items, expenses, payslip=
         p.expenses.exclude(id__in=[e.id for e in expenses]).filter(
             status=ExpenseReport.Status.APPROVED).update(payslip=None)
         ExpenseReport.objects.filter(id__in=[e.id for e in expenses]).update(payslip=p)
-    return p, result.warnings
+    return p, warnings
 
 
 def weekend_of(user):
@@ -218,6 +347,12 @@ def mark_reviewed(obj, user, new_status, comment):
     obj.save()
 
 
+def review_comment(request):
+    s = ReviewSerializer(data=request.data)
+    s.is_valid(raise_exception=True)
+    return s.validated_data['comment']
+
+
 def require_company(request):
     company = active_company(request)
     if company is None:
@@ -244,9 +379,10 @@ def month_param(value):
     return int_param(value, 'month', 1, 12)
 
 
-def scoped_queryset(request, qs):
+def scoped_queryset(request, qs, hr_only=False):
     """?scope=mine (default) | team | all, always limited to the active company.
-    team: a manager's direct reports, or everyone but oneself for a company admin."""
+    team: a manager's direct reports, or everyone but oneself for a company admin.
+    hr_only: requests a manager does not decide (records, certificates) stay private to HR."""
     user = request.user
     scope = request.query_params.get('scope', 'mine')
     if scope in ('team', 'all'):
@@ -254,7 +390,7 @@ def scoped_queryset(request, qs):
         if is_company_admin(request):
             qs = qs.filter(employee__company=company)
             return qs.exclude(employee=user) if scope == 'team' else qs
-        if scope == 'all':
+        if scope == 'all' or hr_only:
             raise PermissionDenied('Réservé à la gestion RH.')
         return qs.filter(employee__manager=user)
     return qs.filter(employee=user)
@@ -452,6 +588,8 @@ class CompanyViewSet(viewsets.ModelViewSet):
                 'pending_leaves': LeaveRequest.objects.filter(employee__company=c, status=RequestStatus.PENDING).count(),
                 'pending_expenses': ExpenseReport.objects.filter(employee__company=c, status=ExpenseReport.Status.PENDING).count(),
                 'pending_profile': ProfileChangeRequest.objects.filter(employee__company=c, status=RequestStatus.PENDING).count(),
+                'pending_certificates': CertificateRequest.objects.filter(employee__company=c,
+                                                                          status=RequestStatus.PENDING).count(),
                 'absent_today': LeaveRequest.objects.filter(employee__company=c, status=RequestStatus.APPROVED,
                                                             start_date__lte=today, end_date__gte=today).count(),
             })
@@ -557,8 +695,11 @@ class DashboardView(APIView):
                 team_expenses = team_expenses.filter(employee__manager=user)
             to_review = {'leaves': team_leaves.count(), 'expenses': team_expenses.count()}
             if admin:
+                # Same rule as the queues: one's own requests are decided by someone else.
                 to_review['profile_requests'] = ProfileChangeRequest.objects.filter(
-                    employee__company=company, status=RequestStatus.PENDING).count()
+                    employee__company=company, status=RequestStatus.PENDING).exclude(employee=user).count()
+                to_review['certificates'] = CertificateRequest.objects.filter(
+                    employee__company=company, status=RequestStatus.PENDING).exclude(employee=user).count()
 
         return Response({
             'has_employee_space': bool(user.company_id),
@@ -608,8 +749,11 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         fields = ', '.join(sorted(serializer.validated_data))
+        was_active = serializer.instance.is_active
         emp = serializer.save()
         audit(self.request, 'employee.update', f'{emp} : {fields}')
+        if was_active and not emp.is_active:
+            self._deactivated(emp)
 
     def destroy(self, request, *args, **kwargs):
         # Payroll records must be kept: deactivate instead of deleting.
@@ -618,8 +762,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             raise ValidationError('Vous ne pouvez pas désactiver votre propre compte.')
         emp.is_active = False
         emp.save(update_fields=['is_active'])
-        audit(request, 'employee.deactivate', str(emp))
+        self._deactivated(emp)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def _deactivated(self, emp):
+        cancelled = cancel_open_requests(emp)
+        audit(self.request, 'employee.deactivate',
+              f'{emp}' + (f' : {cancelled} demande(s) en cours annulée(s)' if cancelled else ''))
 
     @action(detail=True, methods=['get', 'post'])
     def balances(self, request, pk=None):
@@ -740,9 +889,7 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
             p.save(update_fields=['status', 'published_at'])
             # Expenses carried by this payslip are repaid with it.
             p.expenses.filter(status=ExpenseReport.Status.APPROVED).update(status=ExpenseReport.Status.PAID)
-        # "de mars 2026", but "d'octobre 2026".
-        period = month_label(p.year, p.month).lower()
-        period = f"d'{period}" if period[0] in 'aeiouy' else f'de {period}'
+        period = of_month(p.year, p.month)
         if original:
             diff = p.net_salary - original.net_salary
             notify(p.employee, f'Votre bulletin {period} a été corrigé',
@@ -801,6 +948,8 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         employees = s.validated_data.get('employees')
         if employees is None:
             employees = list(User.objects.filter(company=company, is_active=True, base_salary__gt=0))
+        employees = list(dict.fromkeys(employees))   # the same person sent twice is paid once
+        last_day = date(year, month, calendar.monthrange(year, month)[1])
         run_items = bonus_dicts([payroll.Bonus(**b) for b in s.validated_data.get('bonuses', [])])
 
         created, skipped, warnings = [], [], []
@@ -816,6 +965,13 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
                     continue
                 if not draft and month_qs.filter(status=Payslip.Status.PUBLISHED).exists():
                     skipped.append({'employee': str(emp), 'reason': 'Bulletin déjà publié : utilisez « Corriger »'})
+                    continue
+                if emp.hire_date and emp.hire_date > last_day:
+                    reason = f'Embauché le {emp.hire_date:%d/%m/%Y}, après ce mois'
+                    if draft:   # computed before the hire date was entered
+                        draft.delete()
+                        reason += ' : brouillon supprimé'
+                    skipped.append({'employee': str(emp), 'reason': reason})
                     continue
                 if emp.base_salary <= 0:
                     skipped.append({'employee': str(emp), 'reason': 'Salaire de base non renseigné'})
@@ -872,17 +1028,25 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         s = MonthlyVariablesSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         year, month = s.validated_data['year'], s.validated_data['month']
+        published = set(in_force(Payslip.objects.filter(company=company, year=year, month=month,
+                                                         status=Payslip.Status.PUBLISHED))
+                        .values_list('employee_id', flat=True))
+        # Changes for someone already paid only count once their payslip is corrected: say who.
+        already_published = []
         with transaction.atomic():
             for row in s.validated_data['rows']:
                 emp = row.pop('employee')
                 if emp.company_id != company.id:
                     raise ValidationError({'employee': "Ce salarié n'appartient pas à l'entreprise."})
+                current = MonthlyVariable.objects.filter(employee=emp, year=year, month=month).first()
+                if emp.id in published and variable_key(current) != variable_key(row):
+                    already_published.append(str(emp))
                 if row['overtime_hours'] or row['bonus_amount']:
                     MonthlyVariable.objects.update_or_create(employee=emp, year=year, month=month, defaults=row)
                 else:
                     MonthlyVariable.objects.filter(employee=emp, year=year, month=month).delete()
         audit(request, 'payroll.variables', month_label(year, month), company)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({'already_published': already_published})
 
     @action(detail=False, methods=['get'], permission_classes=[IsCompanyAdmin])
     def summary(self, request):
@@ -890,7 +1054,8 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         company = require_company(request)
         year, month = year_param(request.query_params.get('year')), month_param(request.query_params.get('month'))
         qs = in_force(Payslip.objects.filter(company=company, year=year, month=month))
-        return Response(payroll_month_totals(qs))
+        # Drafts are counted so the month can be checked before publishing: the figures stay provisional.
+        return Response({**payroll_month_totals(qs), 'drafts': qs.filter(status=Payslip.Status.DRAFT).count()})
 
 
 class EmployeePayItemViewSet(viewsets.ModelViewSet):
@@ -1008,6 +1173,12 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
                           viewsets.GenericViewSet):
     serializer_class = LeaveRequestSerializer
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+    payroll_warnings = ()
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        response.data['payroll_warnings'] = list(self.payroll_warnings)
+        return response
 
     def get_queryset(self):
         qs = LeaveRequest.objects.select_related('employee', 'reviewer')
@@ -1042,8 +1213,16 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
         if not user.company_id:
             raise ValidationError("Votre compte n'est rattaché à aucune entreprise.")
         days = self._checked_days(user, serializer.validated_data)
+        reviewers = reviewers_for(user)
+        if decides_alone(user, reviewers):
+            lr = serializer.save(employee=user, days=days, status=RequestStatus.APPROVED, reviewer=user,
+                                 reviewed_at=timezone.now(), review_comment=SOLE_REVIEWER_NOTE)
+            audit(self.request, 'leave.approve', f'{user} : {lr.get_leave_type_display()} (aucun autre valideur)',
+                  user.company)
+            self.payroll_warnings = warn_payroll(lr, 'enregistrée')
+            return
         lr = serializer.save(employee=user, days=days)
-        for r in reviewers_for(user):
+        for r in reviewers:
             notify(r, f"Demande d'absence de {user}",
                    f'{lr.get_leave_type_display()} du {lr.start_date:%d/%m/%Y} au {lr.end_date:%d/%m/%Y} ({days} j)',
                    '/equipe', email=True)
@@ -1062,7 +1241,8 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
         notify(emp, 'Une absence a été enregistrée pour vous',
                f'{lr.get_leave_type_display()} du {lr.start_date:%d/%m/%Y} au {lr.end_date:%d/%m/%Y}', '/absences', email=True)
         audit(request, 'leave.create_for', f'{emp} : {lr.get_leave_type_display()}', emp.company)
-        return Response(LeaveRequestSerializer(lr).data, status=status.HTTP_201_CREATED)
+        return Response({**LeaveRequestSerializer(lr).data, 'payroll_warnings': warn_payroll(lr, 'enregistrée')},
+                        status=status.HTTP_201_CREATED)
 
     def _review(self, request, new_status):
         lr = self.get_object()
@@ -1079,7 +1259,8 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
                + (f' — {lr.review_comment}' if lr.review_comment else ''), '/absences', email=True)
         audit(request, f"leave.{'approve' if new_status == RequestStatus.APPROVED else 'reject'}",
               f'{lr.employee} : {lr.get_leave_type_display()}', lr.employee.company)
-        return Response(LeaveRequestSerializer(lr).data)
+        warnings = warn_payroll(lr, 'validée') if new_status == RequestStatus.APPROVED else []
+        return Response({**LeaveRequestSerializer(lr).data, 'payroll_warnings': warnings})
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -1093,16 +1274,26 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
     def cancel(self, request, pk=None):
         lr = self.get_object()
         user = request.user
-        if lr.employee_id == user.id:
+        own = lr.employee_id == user.id
+        if own:
             if lr.status == RequestStatus.APPROVED and lr.start_date <= date.today():
                 raise ValidationError('Une absence déjà commencée ne peut plus être annulée.')
         elif not is_company_admin(request) or lr.employee.company_id != active_company(request).id:
             raise PermissionDenied()
         if lr.status not in [RequestStatus.PENDING, RequestStatus.APPROVED]:
             raise ValidationError('Cette demande ne peut plus être annulée.')
+        was_approved = lr.status == RequestStatus.APPROVED
         lr.status = RequestStatus.CANCELLED
         lr.save(update_fields=['status'])
-        return Response(LeaveRequestSerializer(lr).data)
+        period = f'{lr.get_leave_type_display()} du {lr.start_date:%d/%m/%Y} au {lr.end_date:%d/%m/%Y}'
+        if not own:
+            notify(lr.employee, 'Votre absence a été annulée', f'{period}, par {user}', '/absences', email=True)
+            audit(request, 'leave.cancel', f'{lr.employee} : {lr.get_leave_type_display()}', lr.employee.company)
+        elif was_approved and lr.reviewer and lr.reviewer_id != user.id:
+            # The planning changes: whoever approved it is told.
+            notify(lr.reviewer, f'Absence annulée par {user}', period, '/equipe')
+        warnings = warn_payroll(lr, 'annulée') if was_approved else []
+        return Response({**LeaveRequestSerializer(lr).data, 'payroll_warnings': warnings})
 
     @action(detail=True, methods=['get'])
     def attachment(self, request, pk=None):
@@ -1192,8 +1383,14 @@ class ExpenseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Cr
         user = self.request.user
         if not user.company_id:
             raise ValidationError("Votre compte n'est rattaché à aucune entreprise.")
+        reviewers = reviewers_for(user)
+        if decides_alone(user, reviewers):
+            exp = serializer.save(employee=user, status=ExpenseReport.Status.APPROVED, reviewer=user,
+                                  reviewed_at=timezone.now(), review_comment=SOLE_REVIEWER_NOTE)
+            audit(self.request, 'expense.approve', f'{user} : {exp.description} (aucun autre valideur)', user.company)
+            return
         exp = serializer.save(employee=user)
-        for r in reviewers_for(user):
+        for r in reviewers:
             notify(r, f'Note de frais de {user}', f'{exp.description} — {fmt(exp.amount)} DA', '/equipe')
 
     def _review(self, request, new_status):
@@ -1264,7 +1461,8 @@ class ProfileChangeRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin
     def get_queryset(self):
         qs = ProfileChangeRequest.objects.select_related('employee')
         if self.action == 'list':
-            qs = scoped_queryset(self.request, qs)
+            # The values asked for (bank details, address...) are private: never shown to the manager.
+            qs = scoped_queryset(self.request, qs, hr_only=True)
             if self.request.query_params.get('status'):
                 qs = qs.filter(status=self.request.query_params['status'])
             return qs
@@ -1279,10 +1477,18 @@ class ProfileChangeRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin
             raise ValidationError("Votre compte n'est rattaché à aucune entreprise.")
         if ProfileChangeRequest.objects.filter(employee=user, status=RequestStatus.PENDING).exists():
             raise ValidationError('Une demande de modification est déjà en cours de traitement.')
+        reviewers = hr_reviewers_for(user)
+        if decides_alone(user, reviewers):
+            with transaction.atomic():
+                req = serializer.save(employee=user, status=RequestStatus.APPROVED, reviewer=user,
+                                      reviewed_at=timezone.now(), review_comment=SOLE_REVIEWER_NOTE)
+                apply_profile_changes(user, req.changes)
+            audit(self.request, 'profile.approve', f"{user} : {', '.join(sorted(req.changes))} (aucun autre valideur)",
+                  user.company)
+            return
         serializer.save(employee=user)
-        for hr in hr_recipients(user.company):
-            if hr.id != user.id:
-                notify(hr, f'Modification de dossier demandée par {user}', '', '/admin/demandes')
+        for hr in reviewers:
+            notify(hr, f'Modification de dossier demandée par {user}', '', '/admin/demandes')
 
     def _check_admin(self, request, req):
         if not is_company_admin(request) or req.employee.company_id != active_company(request).id:
@@ -1296,17 +1502,11 @@ class ProfileChangeRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin
     def approve(self, request, pk=None):
         req = self.get_object()
         self._check_admin(request, req)
+        comment = review_comment(request)
         emp = req.employee
-        for field, value in req.changes.items():
-            if field not in REQUESTABLE_FIELDS:
-                continue
-            if field == 'birth_date':
-                value = date.fromisoformat(value) if value else None
-            elif field == 'children_count':
-                value = int(value or 0)
-            setattr(emp, field, value)
-        emp.save()
-        mark_reviewed(req, request.user, RequestStatus.APPROVED, request.data.get('comment', ''))
+        with transaction.atomic():
+            apply_profile_changes(emp, req.changes)
+            mark_reviewed(req, request.user, RequestStatus.APPROVED, comment)
         notify(emp, 'Votre dossier a été mis à jour', 'Les modifications demandées ont été appliquées.', '/profil')
         audit(request, 'profile.approve', f"{emp} : {', '.join(sorted(req.changes))}")
         return Response(ProfileChangeRequestSerializer(req).data)
@@ -1315,7 +1515,7 @@ class ProfileChangeRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin
     def reject(self, request, pk=None):
         req = self.get_object()
         self._check_admin(request, req)
-        mark_reviewed(req, request.user, RequestStatus.REJECTED, request.data.get('comment', ''))
+        mark_reviewed(req, request.user, RequestStatus.REJECTED, review_comment(request))
         notify(req.employee, 'Demande de modification refusée', req.review_comment, '/profil')
         audit(request, 'profile.reject', str(req.employee))
         return Response(ProfileChangeRequestSerializer(req).data)
@@ -1338,7 +1538,7 @@ class CertificateRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, 
     def get_queryset(self):
         qs = CertificateRequest.objects.select_related('employee', 'employee__company')
         if self.action == 'list':
-            qs = scoped_queryset(self.request, qs)
+            qs = scoped_queryset(self.request, qs, hr_only=True)
             if self.request.query_params.get('status'):
                 qs = qs.filter(status=self.request.query_params['status'])
             return qs
@@ -1354,10 +1554,17 @@ class CertificateRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, 
         kind = serializer.validated_data['kind']
         if CertificateRequest.objects.filter(employee=user, kind=kind, status=RequestStatus.PENDING).exists():
             raise ValidationError('Une demande de ce type est déjà en cours de traitement.')
+        reviewers = hr_reviewers_for(user)
+        if decides_alone(user, reviewers):
+            with transaction.atomic():
+                req = serializer.save(employee=user)
+                issue_certificate(req, user, SOLE_REVIEWER_NOTE)
+            audit(self.request, 'certificate.approve', f'{user} : {req.get_kind_display()} (aucun autre valideur)',
+                  user.company)
+            return
         req = serializer.save(employee=user)
-        for hr in hr_recipients(user.company):
-            if hr.id != user.id:
-                notify(hr, f'{req.get_kind_display()} demandée par {user}', req.comment, '/admin/demandes')
+        for hr in reviewers:
+            notify(hr, f'{req.get_kind_display()} demandée par {user}', req.comment, '/admin/demandes')
 
     def _check_admin(self, request, req):
         if not is_company_admin(request) or req.employee.company_id != active_company(request).id:
@@ -1371,23 +1578,16 @@ class CertificateRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, 
     def approve(self, request, pk=None):
         req = self.get_object()
         self._check_admin(request, req)
-        emp = req.employee
-        pdf = render_certificate(req, date.today())
-        title = f'{req.get_kind_display()} — {date.today():%d/%m/%Y}'
-        doc = Document(company=emp.company, employee=emp, category=Document.Category.CERTIFICATE,
-                       title=title, uploaded_by=request.user)
-        doc.file.save(f'{req.kind}_{emp.username}.pdf', ContentFile(pdf), save=True)
-        req.document = doc
-        mark_reviewed(req, request.user, RequestStatus.APPROVED, request.data.get('comment', ''))
-        notify(emp, 'Votre attestation est disponible', title, '/documents', email=True)
-        audit(request, 'certificate.approve', f'{emp} : {req.get_kind_display()}')
+        with transaction.atomic():
+            issue_certificate(req, request.user, review_comment(request))
+        audit(request, 'certificate.approve', f'{req.employee} : {req.get_kind_display()}')
         return Response(CertificateRequestSerializer(req).data)
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         req = self.get_object()
         self._check_admin(request, req)
-        mark_reviewed(req, request.user, RequestStatus.REJECTED, request.data.get('comment', ''))
+        mark_reviewed(req, request.user, RequestStatus.REJECTED, review_comment(request))
         notify(req.employee, "Demande d'attestation refusée", req.review_comment, '/documents')
         audit(request, 'certificate.reject', f'{req.employee} : {req.get_kind_display()}')
         return Response(CertificateRequestSerializer(req).data)

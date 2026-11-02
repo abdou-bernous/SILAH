@@ -275,7 +275,8 @@ export default function ProfilePage() {
         )}
       </div>
 
-      {requestOpen && <ChangeRequestModal open onClose={() => setRequestOpen(false)} user={user} onDone={reload} />}
+      {requestOpen && <ChangeRequestModal open onClose={() => setRequestOpen(false)} user={user}
+        onDone={() => { reload(); refresh() }} />}
       <PasswordModal open={pwdOpen} onClose={() => setPwdOpen(false)} />
     </div>
   )

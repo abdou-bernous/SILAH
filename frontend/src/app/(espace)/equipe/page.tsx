@@ -7,7 +7,7 @@ import { useFetch } from '@/lib/useFetch'
 import { useI18n } from '@/lib/i18n'
 import { date, money, num } from '@/lib/format'
 import type { Expense, LeaveRequest } from '@/lib/types'
-import Card, { EmptyState, PageHeader, Spinner } from '@/components/ui/Card'
+import Card, { Alert, EmptyState, PageHeader, Spinner } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import { StatusBadge } from '@/components/ui/Badge'
 import TeamCalendar from '@/components/TeamCalendar'
@@ -34,6 +34,8 @@ export default function TeamPage() {
   const expenses = useFetch<Expense[]>('/expenses/?scope=team')
   const [review, setReview] = useState<{ p: Pending; decision: 'approve' | 'reject' } | null>(null)
   const [adding, setAdding] = useState(false)
+  // Unpaid absences decided once the month's payroll is computed: what HR has to redo.
+  const [payrollNotice, setPayrollNotice] = useState<string[]>([])
 
   if (!user || (user.role !== 'manager' && !user.is_hr)) {
     return <p className="card p-8 text-center text-sm text-muted">{t('team.managersOnly')}</p>
@@ -48,7 +50,8 @@ export default function TeamPage() {
     const { p, decision } = review
     const url = p.kind === 'leave' ? `/leaves/${p.item.id}/${decision}/` : `/expenses/${p.item.id}/${decision}/`
     try {
-      await api.post(url, { comment })
+      const r = await api.post(url, { comment })
+      setPayrollNotice(r.data?.payroll_warnings || [])
     } catch (e) {
       throw new Error(errorMessage(e))
     }
@@ -76,6 +79,12 @@ export default function TeamPage() {
     <div className="space-y-6">
       <PageHeader title={t('team.title')} subtitle={user.is_hr ? t('team.subtitleHr') : t('team.subtitleManager', { n: user.team_size })}
         actions={<Button onClick={() => setAdding(true)}><PlusIcon className="h-4 w-4" /> {t('team.addAbsence')}</Button>} />
+      {payrollNotice.length > 0 && (
+        <Alert tone="honey">
+          <p className="font-medium">{t('team.payrollNotice')}</p>
+          <ul className="mt-1 list-disc ps-5 text-xs">{payrollNotice.map((w, i) => <li key={i}>{w}</li>)}</ul>
+        </Alert>
+      )}
       <div className="flex gap-1 border-b border-stone">
         {tabs.map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
@@ -172,7 +181,8 @@ export default function TeamPage() {
       )}
 
       {review && <ReviewModal open decision={review.decision} summary={summary} onClose={() => setReview(null)} onConfirm={confirm} />}
-      {adding && <TeamLeaveModal onClose={() => setAdding(false)} onCreated={leaves.reload} />}
+      {adding && <TeamLeaveModal onClose={() => setAdding(false)}
+        onCreated={(warnings) => { setPayrollNotice(warnings); leaves.reload(); refreshUnread() }} />}
     </div>
   )
 }
