@@ -46,6 +46,9 @@ travaillent plus, l'historique restant conservé.
 - Journal d'activité horodaté (qui a fait quoi, sans montants ni données personnelles)
 - Paie mensuelle : calcul en brouillon avec primes et indemnités, déduction automatique des congés sans solde,
   vérification, puis publication (les salariés sont notifiés)
+- Correction d'un bulletin publié : un bulletin rectificatif, avec motif obligatoire, annule et remplace
+  l'original, qui reste archivé avec la mention « remplacé ». L'écart de net est affiché et le salarié est
+  prévenu ; les totaux G50 et CNAS ne comptent que la version en vigueur
 - Dépôt de documents dans le coffre-fort d'un salarié ou pour toute l'entreprise
 - Traitement des demandes de modification de dossier, remboursement des notes de frais
 - Paramètres de l'entreprise : identité (NIF, NIS, RC, CNAS), jours de repos hebdomadaire, congé annuel

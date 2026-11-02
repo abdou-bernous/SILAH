@@ -57,6 +57,7 @@ export default function PayslipsPage() {
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">
                     {monthLabel(p.year, p.month)}
+                    {p.replaces !== null && <span className="ms-2"><Badge tone="mist">{t('correct.badge')}</Badge></span>}
                     {!p.viewed_at && <span className="ms-2"><Badge tone="coffee">{t('common.new')}</Badge></span>}
                   </p>
                   <p className="text-xs text-muted">{t('payslips.publishedOn', { date: date(p.published_at) })}</p>

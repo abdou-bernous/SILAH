@@ -11,6 +11,7 @@ from xml.sax.saxutils import escape
 
 import arabic_reshaper
 from bidi.algorithm import get_display
+from django.utils import timezone
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -127,6 +128,32 @@ def render_certificate(request, issued_on) -> bytes:
     return buf.getvalue()
 
 
+def day(dt):
+    return timezone.localtime(dt).strftime('%d/%m/%Y') if dt else '—'
+
+
+def correction_note(payslip, style, style_r):
+    """The banner of a corrective payslip, or of the payslip it replaced."""
+    if payslip.replaces_id:
+        when = day(payslip.replaces.published_at)
+        fr = f'<b>Bulletin rectificatif</b> : annule et remplace le bulletin publié le {when}.'
+        if payslip.correction_reason:
+            fr += f' Motif : {esc(payslip.correction_reason)}'
+        ar_text = f'كشف تصحيحي: يلغي ويعوض الكشف المنشور بتاريخ {when}.'
+    elif payslip.status == 'replaced':
+        correction = getattr(payslip, 'replaced_by', None)
+        when = day(correction.published_at if correction else None)
+        fr = f"<b>Bulletin remplacé</b> le {when} par un bulletin rectificatif : il n'est plus en vigueur."
+        ar_text = f'عُوّض هذا الكشف بكشف تصحيحي بتاريخ {when}، ولم يعد ساري المفعول.'
+    else:
+        return None
+    box = Table([[[Paragraph(fr, style), Paragraph(ar(ar_text), style_r)]]], colWidths=[186 * mm])
+    box.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), COFFEE_PALE), ('BOX', (0, 0), (-1, -1), 0.6, COFFEE),
+                             ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                             ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5)]))
+    return box
+
+
 def render_payslip(payslip) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12 * mm, rightMargin=12 * mm,
@@ -149,6 +176,9 @@ def render_payslip(payslip) -> bytes:
     head.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
                               ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
     story = [head, Spacer(1, 5 * mm)]
+    note = correction_note(payslip, normal, normal_r)
+    if note:
+        story += [note, Spacer(1, 4 * mm)]
 
     company_lines = [f'<b>{esc(c.name)} {esc(c.legal_form)}</b>' if c else '<b>Employeur</b>']
     if c and c.name_ar:

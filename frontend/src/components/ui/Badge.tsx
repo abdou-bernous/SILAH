@@ -22,7 +22,7 @@ export default function Badge({ children, tone = 'neutral' }: { children: React.
 
 const STATUS_TONES: Record<string, Tone> = {
   pending: 'honey', approved: 'sage', rejected: 'rose', cancelled: 'neutral', paid: 'mist',
-  draft: 'honey', published: 'sage',
+  draft: 'honey', published: 'sage', replaced: 'neutral',
 }
 
 export function StatusBadge({ status }: { status: string }) {

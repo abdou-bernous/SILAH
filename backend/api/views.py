@@ -44,7 +44,8 @@ from .serializers import (
     ChangePasswordSerializer, CompanyAdminSerializer, CompanySerializer, DocumentSerializer,
     EmployeePayItemSerializer, EmployeeSerializer, ExpenseSerializer, LeaveBalanceSerializer,
     LeaveRequestSerializer, MonthlyVariablesSerializer, NotificationSerializer, PasswordResetConfirmSerializer,
-    PasswordResetRequestSerializer, PayrollRunSerializer, PayslipDetailSerializer, PayslipListSerializer,
+    PasswordResetRequestSerializer, PayrollRunSerializer, PayslipCorrectionSerializer, PayslipDetailSerializer,
+    PayslipListSerializer,
     PlatformUserSerializer, ProfileChangeRequestSerializer, ProfileSerializer, ReviewSerializer,
 )
 
@@ -92,6 +93,98 @@ def employee_bonuses(emp, year, month):
         items.append(payroll.Bonus(variable.bonus_label or 'Prime individuelle', variable.bonus_amount,
                                    label_ar='منحة فردية'))
     return items
+
+
+EXPENSES_LABEL = 'Remboursement de frais'
+
+
+def bonus_dicts(bonuses):
+    """The run's bonuses as recorded on a payslip (JSON, amounts as strings)."""
+    return [{'label': b.label, 'label_ar': b.label_ar, 'amount': str(b.amount), 'contributory': b.contributory,
+             'tax': b.tax} for b in bonuses]
+
+
+def bonuses_from_dicts(items):
+    return [payroll.Bonus(i['label'], Decimal(str(i['amount'])), i.get('contributory', True), i.get('tax', 'scale'),
+                          i.get('label_ar', '')) for i in items]
+
+
+def legacy_run_items(p):
+    """For payslips computed before the run's bonuses were recorded: rebuild them from the lines, leaving
+    out what the employee's own items, the monthly grid and the expenses bring. Only a starting point,
+    shown in the correction form for the HR to check."""
+    emp = p.employee
+    own = set(emp.pay_items.filter(is_active=True).values_list('label', flat=True))
+    variable = MonthlyVariable.objects.filter(employee=emp, year=p.year, month=p.month).first()
+    if variable and variable.bonus_amount > 0:
+        own.add(variable.bonus_label or 'Prime individuelle')
+    presets = {v['label']: v for v in payroll.PRESETS.values()}
+    overtime = payroll.PRESETS['overtime']['label']
+    items = []
+    for line in p.lines.all():
+        if line.kind not in ('earning', 'non_taxable') or line.code == 'R100':
+            continue
+        if line.label in own or line.label == EXPENSES_LABEL or line.label.startswith(overtime):
+            continue
+        preset = presets.get(line.label)
+        if preset:
+            contributory, tax = preset['contributory'], preset['tax']
+        elif line.kind == 'non_taxable':
+            contributory, tax = False, 'exempt'
+        else:
+            contributory, tax = True, 'scale'
+        items.append({'label': line.label, 'label_ar': line.label_ar, 'amount': str(line.employee_amount),
+                      'contributory': contributory, 'tax': tax})
+    return items
+
+
+def run_items_of(p):
+    return p.run_items if p.run_items is not None else legacy_run_items(p)
+
+
+def in_force(qs):
+    """The payslips that count for a month: replaced ones and corrections not yet published are left out."""
+    return qs.exclude(status=Payslip.Status.REPLACED).exclude(status=Payslip.Status.DRAFT, replaces__isnull=False)
+
+
+def compute_payslip_for(emp, company, year, month, run_items, expenses, payslip=None, link_expenses=True):
+    """Compute one employee's month and save it as a draft: `payslip` when given, a new one otherwise.
+    Returns the payslip and the engine's warnings."""
+    first, last = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+    weekend = company.weekend_days
+    unpaid = Decimal('0')
+    for lr in LeaveRequest.objects.filter(employee=emp, leave_type=LeaveType.UNPAID, status=RequestStatus.APPROVED,
+                                          start_date__lte=last, end_date__gte=first):
+        unpaid += payroll.overlap_days(lr.start_date, lr.end_date, year, month, weekend, lr.start_half, lr.end_half)
+    items = bonuses_from_dicts(run_items) + employee_bonuses(emp, year, month)
+    if expenses:
+        items.append(payroll.Bonus(EXPENSES_LABEL, sum(e.amount for e in expenses), contributory=False, tax='exempt',
+                                   label_ar='تسديد المصاريف'))
+    result = payroll.compute_payslip(emp.base_salary, items, unpaid, disabled=emp.is_disabled)
+
+    p = payslip or Payslip(employee=emp, year=year, month=month)
+    p.company = company
+    p.run_items = run_items
+    p.job_title, p.department, p.qualification = emp.job_title, emp.department, emp.qualification
+    p.unpaid_days = unpaid
+    working = payroll.working_days_in_month(year, month, weekend)
+    p.worked_days = max(working - unpaid, Decimal('0'))
+    p.worked_hours = payroll.MONTHLY_HOURS if not unpaid else payroll.money(
+        payroll.MONTHLY_HOURS * p.worked_days / working) if working else Decimal('0')
+    for f in ['gross_salary', 'social_contributions', 'taxable_salary', 'income_tax', 'flat_tax',
+              'non_taxable', 'net_salary', 'employer_contributions', 'employer_cost']:
+        setattr(p, f, getattr(result, f))
+    p.save()
+    p.lines.all().delete()
+    PayslipLine.objects.bulk_create([
+        PayslipLine(payslip=p, order=i, code=l.code, label=l.label, label_ar=l.label_ar, kind=l.kind,
+                    base=l.base, rate=l.rate, employee_amount=l.employee_amount, employer_amount=l.employer_amount)
+        for i, l in enumerate(result.lines)])
+    if link_expenses:
+        p.expenses.exclude(id__in=[e.id for e in expenses]).filter(
+            status=ExpenseReport.Status.APPROVED).update(payslip=None)
+        ExpenseReport.objects.filter(id__in=[e.id for e in expenses]).update(payslip=p)
+    return p, result.warnings
 
 
 def weekend_of(user):
@@ -350,7 +443,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
         rows = []
         for c in self.get_queryset():
             last = Payslip.objects.filter(company=c).order_by('-year', '-month').first()
-            month_qs = Payslip.objects.filter(company=c, year=last.year, month=last.month) if last else Payslip.objects.none()
+            month_qs = in_force(Payslip.objects.filter(company=c, year=last.year, month=last.month)) if last else Payslip.objects.none()
             totals = payroll_month_totals(month_qs)
             rows.append({
                 **CompanyAdminSerializer(c).data,
@@ -393,7 +486,7 @@ class PlatformStatsView(APIView):
                 'employee_count': c.employee_count,
                 'managers': [u.get_full_name() or u.username for u in c.managers.all()],
                 'last_payroll': f'{last.month:02d}/{last.year}' if last else None,
-                'last_net': payroll_month_totals(Payslip.objects.filter(company=c, year=last.year, month=last.month))['net'] if last else None,
+                'last_net': payroll_month_totals(in_force(Payslip.objects.filter(company=c, year=last.year, month=last.month)))['net'] if last else None,
                 'pending': (LeaveRequest.objects.filter(employee__company=c, status=RequestStatus.PENDING).count()
                             + ExpenseReport.objects.filter(employee__company=c, status=ExpenseReport.Status.PENDING).count()),
             })
@@ -562,7 +655,7 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
 
     def get_queryset(self):
         user = self.request.user
-        qs = Payslip.objects.select_related('employee', 'employee__company', 'company').prefetch_related('lines')
+        qs = Payslip.objects.select_related('employee', 'employee__company', 'company', 'replaces', 'replaced_by').prefetch_related('lines')
         params = self.request.query_params
         admin = is_company_admin(self.request)
         company = active_company(self.request)
@@ -596,8 +689,9 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
             raise PermissionDenied('Réservé à la gestion RH.')
         p = self.get_object()
         if p.status != Payslip.Status.DRAFT:
-            raise ValidationError('Un bulletin publié ne peut pas être supprimé.')
-        audit(request, 'payroll.delete', f'{p.employee} {month_label(p.year, p.month)}')
+            raise ValidationError('Un bulletin publié ne peut pas être supprimé : utilisez « Corriger ».')
+        audit(request, 'payroll.correction_cancel' if p.replaces_id else 'payroll.delete',
+              f'{p.employee} {month_label(p.year, p.month)}')
         p.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -630,15 +724,72 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
 
     @staticmethod
     def _publish(p):
-        if p.status == Payslip.Status.PUBLISHED:
+        if p.status != Payslip.Status.DRAFT:
             return
-        p.status = Payslip.Status.PUBLISHED
-        p.published_at = timezone.now()
-        p.save(update_fields=['status', 'published_at'])
-        # Expenses carried by this payslip are repaid with it.
-        p.expenses.filter(status=ExpenseReport.Status.APPROVED).update(status=ExpenseReport.Status.PAID)
-        notify(p.employee, f'Votre bulletin de {month_label(p.year, p.month).lower()} est disponible',
-               f'Net à payer : {fmt(p.net_salary)} DA', f'/bulletins/{p.id}', email=True)
+        original = p.replaces
+        with transaction.atomic():
+            if original:
+                if original.status != Payslip.Status.PUBLISHED:
+                    raise ValidationError("Le bulletin d'origine n'est plus en vigueur.")
+                # The original stays as issued, marked replaced; its expenses now belong to the correction.
+                original.status = Payslip.Status.REPLACED
+                original.save(update_fields=['status'])
+                original.expenses.update(payslip=p)
+            p.status = Payslip.Status.PUBLISHED
+            p.published_at = timezone.now()
+            p.save(update_fields=['status', 'published_at'])
+            # Expenses carried by this payslip are repaid with it.
+            p.expenses.filter(status=ExpenseReport.Status.APPROVED).update(status=ExpenseReport.Status.PAID)
+        # "de mars 2026", but "d'octobre 2026".
+        period = month_label(p.year, p.month).lower()
+        period = f"d'{period}" if period[0] in 'aeiouy' else f'de {period}'
+        if original:
+            diff = p.net_salary - original.net_salary
+            notify(p.employee, f'Votre bulletin {period} a été corrigé',
+                   f'Nouveau net à payer : {fmt(p.net_salary)} DA ({"+" if diff >= 0 else "-"}{fmt(abs(diff))} DA). '
+                   f'Motif : {p.correction_reason}', f'/bulletins/{p.id}', email=True)
+        else:
+            notify(p.employee, f'Votre bulletin {period} est disponible',
+                   f'Net à payer : {fmt(p.net_salary)} DA', f'/bulletins/{p.id}', email=True)
+
+    @action(detail=True, methods=['get', 'post'], permission_classes=[IsCompanyAdmin])
+    def correct(self, request, pk=None):
+        """Prepare (or redo) the corrective payslip that will cancel and replace this published one.
+        Nothing changes for the employee until the correction is published. GET gives the form's
+        starting values: the correction in progress, or the bonuses of the payslip itself."""
+        original = self.get_object()
+        company = require_company(request)
+        if original.company_id != company.id:
+            raise PermissionDenied()
+        if original.status != Payslip.Status.PUBLISHED:
+            raise ValidationError('Seul un bulletin publié et en vigueur peut être corrigé.')
+        emp = original.employee
+        draft = Payslip.objects.filter(employee=emp, year=original.year, month=original.month,
+                                       status=Payslip.Status.DRAFT).first()
+        if draft and draft.replaces_id != original.id:
+            raise ValidationError("Un brouillon existe déjà pour ce mois : publiez-le ou supprimez-le d'abord.")
+        if request.method == 'GET':
+            return Response({'draft': draft.id if draft else None, 'reason': draft.correction_reason if draft else '',
+                             'items': draft.run_items if draft else run_items_of(original)})
+
+        s = PayslipCorrectionSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        if emp.company_id != company.id:
+            raise ValidationError("Ce salarié n'appartient plus à l'entreprise.")
+        if emp.base_salary <= 0:
+            raise ValidationError('Salaire de base non renseigné.')
+        items = s.validated_data.get('items')
+        run_items = bonus_dicts([payroll.Bonus(**b) for b in items]) if items is not None else run_items_of(original)
+        p = draft or Payslip(employee=emp, year=original.year, month=original.month, replaces=original)
+        p.correction_reason = s.validated_data['reason']
+        with transaction.atomic():
+            # Same expenses as the original: they were repaid with it, the correction must not drop them.
+            p, warnings = compute_payslip_for(emp, company, original.year, original.month, run_items,
+                                              list(original.expenses.all()), payslip=p, link_expenses=False)
+        audit(request, 'payroll.correct', f'{emp} {month_label(original.year, original.month)}')
+        data = PayslipDetailSerializer(p).data
+        return Response({**data, 'warnings': warnings},
+                        status=status.HTTP_200_OK if draft else status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], permission_classes=[IsCompanyAdmin])
     def run(self, request):
@@ -650,9 +801,7 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         employees = s.validated_data.get('employees')
         if employees is None:
             employees = list(User.objects.filter(company=company, is_active=True, base_salary__gt=0))
-        bonuses = [payroll.Bonus(**b) for b in s.validated_data.get('bonuses', [])]
-        first, last = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
-        weekend = company.weekend_days
+        run_items = bonus_dicts([payroll.Bonus(**b) for b in s.validated_data.get('bonuses', [])])
 
         created, skipped, warnings = [], [], []
         with transaction.atomic():
@@ -660,51 +809,24 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
                 if emp.company_id != company.id:
                     skipped.append({'employee': str(emp), 'reason': "N'appartient pas à l'entreprise"})
                     continue
-                existing = Payslip.objects.filter(employee=emp, year=year, month=month).first()
-                if existing and existing.status == Payslip.Status.PUBLISHED:
-                    skipped.append({'employee': str(emp), 'reason': 'Bulletin déjà publié'})
+                month_qs = Payslip.objects.filter(employee=emp, year=year, month=month)
+                draft = month_qs.filter(status=Payslip.Status.DRAFT).first()
+                if draft and draft.replaces_id:
+                    skipped.append({'employee': str(emp), 'reason': 'Correction en cours : recalculez-la depuis le bulletin'})
+                    continue
+                if not draft and month_qs.filter(status=Payslip.Status.PUBLISHED).exists():
+                    skipped.append({'employee': str(emp), 'reason': 'Bulletin déjà publié : utilisez « Corriger »'})
                     continue
                 if emp.base_salary <= 0:
                     skipped.append({'employee': str(emp), 'reason': 'Salaire de base non renseigné'})
                     continue
-                unpaid = Decimal('0')
-                for lr in LeaveRequest.objects.filter(employee=emp, leave_type=LeaveType.UNPAID,
-                                                      status=RequestStatus.APPROVED,
-                                                      start_date__lte=last, end_date__gte=first):
-                    unpaid += payroll.overlap_days(lr.start_date, lr.end_date, year, month, weekend,
-                                                   lr.start_half, lr.end_half)
-                items = bonuses + employee_bonuses(emp, year, month)
                 expenses = []
                 if s.validated_data['include_expenses']:
                     expenses = list(ExpenseReport.objects.filter(
-                        Q(payslip__isnull=True) | Q(payslip=existing), employee=emp,
+                        Q(payslip__isnull=True) | Q(payslip=draft), employee=emp,
                         status=ExpenseReport.Status.APPROVED))
-                    if expenses:
-                        items.append(payroll.Bonus('Remboursement de frais', sum(e.amount for e in expenses),
-                                                   contributory=False, tax='exempt', label_ar='تسديد المصاريف'))
-                result = payroll.compute_payslip(emp.base_salary, items, unpaid, disabled=emp.is_disabled)
-                warnings += [{'employee': str(emp), 'message': w} for w in result.warnings]
-                p = existing or Payslip(employee=emp, year=year, month=month)
-                p.company = company
-                p.job_title, p.department, p.qualification = emp.job_title, emp.department, emp.qualification
-                p.unpaid_days = unpaid
-                working = payroll.working_days_in_month(year, month, weekend)
-                p.worked_days = max(working - unpaid, Decimal('0'))
-                p.worked_hours = payroll.MONTHLY_HOURS if not unpaid else payroll.money(
-                    payroll.MONTHLY_HOURS * p.worked_days / working) if working else Decimal('0')
-                for f in ['gross_salary', 'social_contributions', 'taxable_salary', 'income_tax', 'flat_tax',
-                          'non_taxable', 'net_salary', 'employer_contributions', 'employer_cost']:
-                    setattr(p, f, getattr(result, f))
-                p.save()
-                p.lines.all().delete()
-                PayslipLine.objects.bulk_create([
-                    PayslipLine(payslip=p, order=i, code=l.code, label=l.label, label_ar=l.label_ar, kind=l.kind,
-                                base=l.base, rate=l.rate, employee_amount=l.employee_amount,
-                                employer_amount=l.employer_amount)
-                    for i, l in enumerate(result.lines)])
-                p.expenses.exclude(id__in=[e.id for e in expenses]).filter(
-                    status=ExpenseReport.Status.APPROVED).update(payslip=None)
-                ExpenseReport.objects.filter(id__in=[e.id for e in expenses]).update(payslip=p)
+                p, engine_warnings = compute_payslip_for(emp, company, year, month, run_items, expenses, payslip=draft)
+                warnings += [{'employee': str(emp), 'message': w} for w in engine_warnings]
                 if s.validated_data['publish']:
                     self._publish(p)
                 created.append(p)
@@ -718,7 +840,9 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
     def publish_month(self, request):
         company = require_company(request)
         year, month = year_param(request.data.get('year')), month_param(request.data.get('month'))
-        drafts = Payslip.objects.filter(company=company, year=year, month=month, status=Payslip.Status.DRAFT)
+        # A correction is published on its own, once its difference has been checked.
+        drafts = Payslip.objects.filter(company=company, year=year, month=month, status=Payslip.Status.DRAFT,
+                                        replaces__isnull=True)
         count = 0
         for p in drafts.select_related('employee'):
             self._publish(p)
@@ -765,7 +889,7 @@ class PayslipViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.De
         """Monthly totals used for the G50 (IRG) and CNAS returns."""
         company = require_company(request)
         year, month = year_param(request.query_params.get('year')), month_param(request.query_params.get('month'))
-        qs = Payslip.objects.filter(company=company, year=year, month=month)
+        qs = in_force(Payslip.objects.filter(company=company, year=year, month=month))
         return Response(payroll_month_totals(qs))
 
 

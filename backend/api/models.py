@@ -122,6 +122,8 @@ class Payslip(models.Model):
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Brouillon'
         PUBLISHED = 'published', 'Publié'
+        # Still kept as it was issued, but cancelled and replaced by a corrective payslip.
+        REPLACED = 'replaced', 'Remplacé'
 
     employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='payslips')
     company = models.ForeignKey(Company, null=True, on_delete=models.SET_NULL, related_name='payslips')
@@ -152,10 +154,23 @@ class Payslip(models.Model):
     published_at = models.DateTimeField(null=True, blank=True)
     viewed_at = models.DateTimeField(null=True, blank=True)
 
+    # A corrective payslip ("annule et remplace") points to the published payslip it replaces once
+    # it is published itself. Until then the original stays the one in force.
+    replaces = models.OneToOneField('self', null=True, blank=True, on_delete=models.PROTECT,
+                                    related_name='replaced_by')
+    correction_reason = models.TextField(blank=True)
+    # The bonuses the payroll run applied to everyone, so that a correction can redo the computation.
+    # None on payslips computed before they were recorded.
+    run_items = models.JSONField(null=True, blank=True)
+
     class Meta:
         ordering = ['-year', '-month']
+        # Per employee and month: one payslip in force, plus at most one draft (a correction).
         constraints = [
-            models.UniqueConstraint(fields=['employee', 'year', 'month'], name='unique_payslip_per_month'),
+            models.UniqueConstraint(fields=['employee', 'year', 'month'], condition=models.Q(status='draft'),
+                                    name='one_draft_payslip_per_month'),
+            models.UniqueConstraint(fields=['employee', 'year', 'month'], condition=models.Q(status='published'),
+                                    name='one_published_payslip_per_month'),
         ]
 
     def __str__(self):

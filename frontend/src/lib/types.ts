@@ -79,12 +79,19 @@ export interface PayslipSummary {
   employee: UserLite
   year: number
   month: number
-  status: 'draft' | 'published'
+  status: 'draft' | 'published' | 'replaced'
   gross_salary: string
   net_salary: string
   employer_cost: string
   published_at: string | null
   viewed_at: string | null
+  // Corrections ("annule et remplace"): `replaces` is set on a corrective payslip,
+  // `replaced_by` on the payslip it corrects (a draft while the correction is prepared).
+  replaces: number | null
+  replaced_by: { id: number; status: PayslipSummary['status'] } | null
+  previous_net: string | null
+  previous_published_at: string | null
+  correction_reason: string
 }
 
 export interface PayslipLine {

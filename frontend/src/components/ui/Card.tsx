@@ -52,8 +52,8 @@ export function Spinner({ label }: { label?: string }) {
   )
 }
 
-export function Alert({ children, tone = 'rose' }: { children: React.ReactNode; tone?: 'rose' | 'sage' | 'honey' }) {
-  const t = { rose: 'bg-rose text-rose-ink', sage: 'bg-sage text-sage-ink', honey: 'bg-honey text-honey-ink' }[tone]
+export function Alert({ children, tone = 'rose' }: { children: React.ReactNode; tone?: 'rose' | 'sage' | 'honey' | 'mist' }) {
+  const t = { rose: 'bg-rose text-rose-ink', sage: 'bg-sage text-sage-ink', honey: 'bg-honey text-honey-ink', mist: 'bg-mist text-mist-ink' }[tone]
   return <div className={`rounded-lg px-4 py-2.5 text-sm ${t}`}>{children}</div>
 }
 

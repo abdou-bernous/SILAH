@@ -258,16 +258,37 @@ class PayslipLineSerializer(serializers.ModelSerializer):
         fields = ['code', 'label', 'label_ar', 'kind', 'base', 'rate', 'employee_amount', 'employer_amount']
 
 
-class PayslipListSerializer(serializers.ModelSerializer):
+class CorrectionFieldsMixin(serializers.Serializer):
+    """Links between a payslip and its correction ("annule et remplace")."""
+    replaced_by = serializers.SerializerMethodField()
+    previous_net = serializers.SerializerMethodField()
+    previous_published_at = serializers.SerializerMethodField()
+
+    def get_replaced_by(self, obj):
+        # Reverse one-to-one: the missing-object error is also an AttributeError.
+        c = getattr(obj, 'replaced_by', None)
+        return {'id': c.id, 'status': c.status} if c else None
+
+    def get_previous_net(self, obj):
+        return obj.replaces.net_salary if obj.replaces_id else None
+
+    def get_previous_published_at(self, obj):
+        return obj.replaces.published_at if obj.replaces_id else None
+
+
+CORRECTION_FIELDS = ['replaces', 'replaced_by', 'previous_net', 'previous_published_at', 'correction_reason']
+
+
+class PayslipListSerializer(CorrectionFieldsMixin, serializers.ModelSerializer):
     employee = UserLiteSerializer(read_only=True)
 
     class Meta:
         model = Payslip
         fields = ['id', 'employee', 'year', 'month', 'status', 'gross_salary', 'net_salary',
-                  'employer_cost', 'published_at', 'viewed_at']
+                  'employer_cost', 'published_at', 'viewed_at', *CORRECTION_FIELDS]
 
 
-class PayslipDetailSerializer(serializers.ModelSerializer):
+class PayslipDetailSerializer(CorrectionFieldsMixin, serializers.ModelSerializer):
     employee = serializers.SerializerMethodField()
     company = serializers.SerializerMethodField()
     lines = PayslipLineSerializer(many=True, read_only=True)
@@ -278,7 +299,7 @@ class PayslipDetailSerializer(serializers.ModelSerializer):
                   'qualification', 'worked_days', 'worked_hours', 'unpaid_days', 'gross_salary',
                   'social_contributions', 'taxable_salary', 'income_tax', 'flat_tax', 'non_taxable',
                   'net_salary', 'employer_contributions', 'employer_cost', 'lines',
-                  'created_at', 'published_at', 'viewed_at']
+                  'created_at', 'published_at', 'viewed_at', *CORRECTION_FIELDS]
 
     def get_employee(self, obj):
         e = obj.employee
@@ -301,6 +322,12 @@ class BonusInputSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
     contributory = serializers.BooleanField(default=True)
     tax = serializers.ChoiceField(choices=['scale', 'flat', 'exempt'], default='scale')
+
+
+class PayslipCorrectionSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=500)
+    # The bonuses applied to everyone that month; by default those of the payslip being corrected.
+    items = BonusInputSerializer(many=True, required=False)
 
 
 class PayrollRunSerializer(serializers.Serializer):
