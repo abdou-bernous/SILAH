@@ -118,8 +118,8 @@ demandes** : en attente, validée, refusée (avec le commentaire), annulée.
 
 Menu **Notes de frais**.
 
-1. **Nouvelle note** : date, catégorie (transport, repas, hébergement, kilométriques, fournitures, autre), montant
-   en DA, description.
+1. **Nouvelle note** : date (aujourd'hui au plus tard), catégorie (transport, repas, hébergement, kilométriques,
+   fournitures, autre), montant en DA, description.
 2. Joignez le justificatif (photo ou PDF du ticket, 10 Mo maximum), puis enregistrez.
 3. Suivez le statut : en attente → validée → remboursée, ou refusée.
 
@@ -130,8 +130,9 @@ votre bulletin de paie, sur une ligne « Remboursement de frais » non imposable
 
 - **Coordonnées** : votre téléphone et votre contact d'urgence se modifient directement (**Modifier**).
 - **État civil, adresse et coordonnées bancaires** : ces informations figurent sur vos bulletins. Cliquez sur
-  **Demander une modification**, changez les champs voulus, puis envoyez. Le service RH vérifie et applique. Une
-  seule demande peut être en cours, et vous pouvez l'annuler tant qu'elle n'est pas traitée.
+  **Demander une modification**, changez les champs voulus, puis envoyez. Seuls les champs que vous changez vraiment
+  sont envoyés : une demande qui ne change rien est refusée. Le service RH vérifie et applique. Une seule demande
+  peut être en cours, et vous pouvez l'annuler tant qu'elle n'est pas traitée.
 
 ---
 
@@ -147,6 +148,8 @@ Menu **Validations équipe**, onglet **À valider**.
 - ✓ pour valider, ✗ pour refuser. Vous pouvez ajouter un commentaire, conseillé en cas de refus pour que le salarié
   comprenne.
 - Le collaborateur est prévenu de la décision.
+- Un congé sans solde validé ou saisi sur un mois dont la paie est déjà calculée affiche l'encadré **Paie à revoir** :
+  le service RH et le comptable sont prévenus pour corriger la paie.
 
 Vous ne pouvez pas valider vos propres demandes.
 
@@ -173,11 +176,13 @@ Menu **Salariés**.
 
 - **Ajouter un salarié** : identité et accès (identifiant, mot de passe initial), contrat et rémunération (poste,
   catégorie, type de contrat, date d'embauche, salaire de base), données personnelles. Un salaire inférieur au SNMG
-  (24 000 DA pour 173,33 h) est signalé, sans être bloqué, pour les temps partiels.
+  (24 000 DA pour 173,33 h) est signalé, sans être bloqué, pour les temps partiels. La date de naissance
+  doit donner au moins 15 ans.
 - Le **manager** d'un salarié doit avoir le rôle Manager ou RH.
 - Sur la fiche d'un salarié :
   - **Rubriques permanentes** : éléments repris sur chaque bulletin (panier, transport, IEP…). Choisissez la
-    rubrique, le montant, puis **Ajouter**.
+    rubrique, le montant, puis **Ajouter**. Les primes imposées à 10 % (PRC, rappel) n'en font pas partie : elles ne
+    reviennent pas chaque mois, ajoutez-les dans la paie du mois concerné.
   - **Compteurs de congés** de l'année : modifiez le nombre de jours acquis.
   - Ses bulletins et ses documents personnels.
 - **Désactiver le compte** : le salarié ne peut plus se connecter, ses bulletins sont conservés, et ses demandes en
@@ -191,13 +196,19 @@ Menu **Paie**.
 1. Choisissez le **mois** et l'**année**.
 2. **Variables individuelles** : pour chaque salarié, saisissez les heures supplémentaires (majoration de 50 % au
    minimum) et une éventuelle prime individuelle, puis **Enregistrer**. Les congés sans solde validés sont repris
-   automatiquement.
+   automatiquement. Au-delà de 34,67 h supplémentaires dans le mois (20 % de la durée légale), le calcul affiche un
+   avertissement : une dérogation est nécessaire. Si le bulletin du salarié est déjà publié, un message le signale :
+   passez par **Corriger** (section suivante) pour que les variables y figurent.
 3. **Primes et indemnités (appliquées à tous)** : ajoutez une rubrique commune à tous les salariés du mois si besoin.
    Choisissez dans la liste (PRI, PRC, panier…) ou créez une rubrique libre, puis réglez le montant, la soumission
    à la CNAS et le régime d'IRG.
 4. Laissez cochée la case **Rembourser les notes de frais validées sur le bulletin** pour payer les frais avec le
    salaire. Décochez-la si vous les remboursez à part.
-5. Cliquez sur **Calculer** : les bulletins sont créés **en brouillon**. Les salariés ne voient encore rien.
+5. Cliquez sur **Calculer** (le bouton porte aussi le nom du mois) : les bulletins sont créés **en brouillon**. Les
+   salariés ne voient encore rien. Le calcul tient compte de la date d'embauche : un salarié embauché après le mois
+   est écarté, avec le motif « Embauché le …, après ce mois » ; embauché en cours de mois, son salaire de base est
+   réduit des jours ouvrés qui précèdent son arrivée (ligne « Entrée en cours de mois ») et un avertissement le
+   signale. Un congé sans solde qui couvre tous les jours ouvrés du mois ne laisse aucun salaire de base.
 6. Vérifiez chaque brouillon (cliquez sur le nom) et les totaux du mois. En cas d'erreur, corrigez la cause (fiche
    du salarié, variables, absences) puis relancez **Calculer** : les brouillons sont recalculés. Vous pouvez aussi
    supprimer un brouillon (corbeille).
@@ -234,12 +245,15 @@ L'accueil affiche le nombre de demandes en attente. Le bandeau **N demande(s) à
   à rembourser** (**Marquer remboursée**, sauf si la note est déjà incluse dans un bulletin).
 - **Demandes à traiter** :
   - **Demandes d'attestation** : **Délivrer** génère le PDF et le dépose dans les documents du salarié. La fiche du
-    salarié doit être complète, sinon un message indique ce qui manque.
-  - **Modifications de dossier** : l'ancienne et la nouvelle valeur sont affichées. **Appliquer** met à jour le
-    dossier, **Refuser** avec un commentaire.
+    salarié doit être complète (date d'embauche, poste, et salaire de base pour une attestation de salaire), sinon un
+    message indique ce qui manque. Aucune attestation n'est délivrée avant la date d'embauche ni pour un salarié
+    désactivé.
+  - Modifications de dossier : l'ancienne et la nouvelle valeur sont affichées. **Appliquer** met à jour le dossier,
+    **Refuser** avec un commentaire.
 
-Vos propres demandes sont traitées par un autre RH ou par le comptable. Si vous êtes le seul RH et qu'il n'y a pas de
-comptable, elles sont validées d'office, avec une trace dans le journal.
+Vos propres demandes ne passent jamais par vous : vos absences et notes de frais vont à votre manager, ou à défaut à
+un autre RH ou au comptable ; vos modifications de dossier et vos attestations vont à un autre RH ou au comptable. Si
+personne d'autre ne peut décider, elles sont validées d'office, avec une trace dans le journal.
 
 Une absence sans solde validée, saisie ou annulée sur un mois déjà calculé déclenche une alerte : recalculez le
 brouillon, ou corrigez le bulletin s'il est publié.
@@ -267,7 +281,8 @@ personnelles.
 Le comptable gère **plusieurs entreprises clientes**. Dans chacune, il fait tout ce que fait un RH (section 4).
 
 - **Mes entreprises** : une carte par entreprise, avec le nombre de salariés, la dernière paie et ce qui reste à
-  traiter (brouillons, absences, frais, modifications). **Salariés** et **Paie** ouvrent l'entreprise.
+  traiter (brouillons, absences, frais, modifications de dossier, attestations). **Salariés** et **Paie** ouvrent
+  l'entreprise.
 - **Changer d'entreprise** : le sélecteur en haut de l'écran.
 - **Nouvelle entreprise** : renseignez l'identité de l'employeur. Vous êtes automatiquement rattaché à l'entreprise
   créée, et vous pouvez ensuite ajouter les salariés, dont un RH si l'entreprise en a un.
@@ -313,8 +328,9 @@ Le service RH peut corriger les jours acquis sur votre fiche (**Compteurs de con
 Essayez **Mot de passe oublié ?**. Si votre entreprise a été désactivée, la connexion est refusée : contactez votre
 employeur.
 
-**Pourquoi mon manager ne voit-il pas le motif de l'absence de mes collègues ?**
-Il le voit pour son équipe. Ce sont les collègues qui voient seulement « Absent », pour la confidentialité.
+**Mes collègues voient-ils le motif de mes absences ?**
+Non : dans le calendrier de l'équipe, ils voient seulement « Absent ». Le type d'absence n'est visible que par vous,
+votre manager et le service RH. Le télétravail n'apparaît pas dans le calendrier.
 
 ---
 
@@ -322,4 +338,5 @@ Il le voit pour son équipe. Ce sont les collègues qui voient seulement « Abse
 
 | Date | Commit | Changement |
 |---|---|---|
+| 2 novembre 2026 | `6594a35` | Compléments : calcul selon la date d'embauche, alerte heures sup., variables après publication, rubriques à 10 %, conditions d'une attestation, qui valide les demandes d'un RH, confidentialité du calendrier |
 | 2 novembre 2026 | `6594a35` | Première version : tous les rôles, paie, bulletin rectificatif, demandes à traiter, attestations, mot de passe oublié, usage sur téléphone |
