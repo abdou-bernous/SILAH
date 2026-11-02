@@ -55,9 +55,13 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------- helpers
 
-def notify(user, title, message='', link='', email=False):
+def notify(user, title, message='', link='', email=False, company=None):
+    """`company`: the client a notification is about. An accountant belongs to none of his clients and works
+    on one at a time, so his link names it (`?client=<id>`) and opens on that client."""
     if not user or not user.is_active:
         return
+    if company and link and user.role == User.Role.ACCOUNTANT:
+        link = f"{link}{'&' if '?' in link else '?'}client={company.id}"
     Notification.objects.create(user=user, title=title, message=message, link=link)
     if email and user.email:
         try:
@@ -131,7 +135,8 @@ def warn_payroll(lr, what):
     found = payroll_impact(lr)
     for message, link in found:
         for u in hr_recipients(lr.employee.company):
-            notify(u, f'Absence sans solde {what} : paie à revoir pour {lr.employee}', message, link)
+            notify(u, f'Absence sans solde {what} : paie à revoir pour {lr.employee}', message, link,
+                   company=lr.employee.company)
     return [message for message, _ in found]
 
 
@@ -1225,7 +1230,7 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
         for r in reviewers:
             notify(r, f"Demande d'absence de {user}",
                    f'{lr.get_leave_type_display()} du {lr.start_date:%d/%m/%Y} au {lr.end_date:%d/%m/%Y} ({days} j)',
-                   '/equipe', email=True)
+                   '/equipe', email=True, company=user.company)
 
     @action(detail=False, methods=['post'])
     def for_employee(self, request):
@@ -1291,7 +1296,7 @@ class LeaveRequestViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixi
             audit(request, 'leave.cancel', f'{lr.employee} : {lr.get_leave_type_display()}', lr.employee.company)
         elif was_approved and lr.reviewer and lr.reviewer_id != user.id:
             # The planning changes: whoever approved it is told.
-            notify(lr.reviewer, f'Absence annulée par {user}', period, '/equipe')
+            notify(lr.reviewer, f'Absence annulée par {user}', period, '/equipe', company=lr.employee.company)
         warnings = warn_payroll(lr, 'annulée') if was_approved else []
         return Response({**LeaveRequestSerializer(lr).data, 'payroll_warnings': warnings})
 
@@ -1391,7 +1396,8 @@ class ExpenseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Cr
             return
         exp = serializer.save(employee=user)
         for r in reviewers:
-            notify(r, f'Note de frais de {user}', f'{exp.description} — {fmt(exp.amount)} DA', '/equipe')
+            notify(r, f'Note de frais de {user}', f'{exp.description} — {fmt(exp.amount)} DA', '/equipe',
+                   company=user.company)
 
     def _review(self, request, new_status):
         exp = self.get_object()
@@ -1488,7 +1494,7 @@ class ProfileChangeRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin
             return
         serializer.save(employee=user)
         for hr in reviewers:
-            notify(hr, f'Modification de dossier demandée par {user}', '', '/admin/demandes')
+            notify(hr, f'Modification de dossier demandée par {user}', '', '/admin/demandes', company=user.company)
 
     def _check_admin(self, request, req):
         if not is_company_admin(request) or req.employee.company_id != active_company(request).id:
@@ -1564,7 +1570,8 @@ class CertificateRequestViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, 
             return
         req = serializer.save(employee=user)
         for hr in reviewers:
-            notify(hr, f'{req.get_kind_display()} demandée par {user}', req.comment, '/admin/demandes')
+            notify(hr, f'{req.get_kind_display()} demandée par {user}', req.comment, '/admin/demandes',
+                   company=user.company)
 
     def _check_admin(self, request, req):
         if not is_company_admin(request) or req.employee.company_id != active_company(request).id:

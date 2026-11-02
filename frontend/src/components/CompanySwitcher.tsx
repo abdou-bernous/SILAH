@@ -5,17 +5,24 @@ import { useAuth } from '@/context/AuthContext'
 import { getActiveCompany, setActiveCompany } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 
+type Client = { id: number; name: string }
+
+function savedClient(companies?: Client[]): Client | null {
+  const saved = getActiveCompany()
+  return companies?.find((c) => String(c.id) === saved) || null
+}
+
 /** The client an accountant is working on, or null: he belongs to none of them, so none is implied. */
 export function useActiveCompany() {
   const { user } = useAuth()
-  const [active, setActive] = useState<{ id: number; name: string } | null>(null)
   const companies = user?.companies
+  // Read at once, so a page about the chosen client never flashes the "pick a client first" message.
+  const [active, setActive] = useState<Client | null>(() => savedClient(companies))
 
   useEffect(() => {
-    const saved = getActiveCompany()
-    const found = companies?.find((c) => String(c.id) === saved) || null
+    const found = savedClient(companies)
     // A client that was removed or deactivated must not stay selected.
-    if (saved && companies && !found) setActiveCompany(null)
+    if (getActiveCompany() && companies && !found) setActiveCompany(null)
     setActive(found)
   }, [companies])
 

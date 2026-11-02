@@ -188,14 +188,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function HrOnly({ children }: { children: React.ReactNode }) {
+/** An accountant works on one client at a time: a page about a client's staff or payroll asks him to pick it
+ * first, rather than showing empty lists. Everyone else always has their company. */
+export function ClientRequired({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
   const { t } = useI18n()
   const client = useActiveCompany()
-  if (!user?.is_hr || !user.companies.length) {
-    return <p className="card p-8 text-center text-sm text-muted">{t('common.hrOnly')}</p>
-  }
-  if (user.role === 'accountant' && !client) {
+  if (user?.role === 'accountant' && !client) {
     return (
       <div className="card p-8 text-center text-sm text-muted">
         <p>{t('switcher.pickFirst')}</p>
@@ -204,6 +203,15 @@ export function HrOnly({ children }: { children: React.ReactNode }) {
     )
   }
   return <>{children}</>
+}
+
+export function HrOnly({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth()
+  const { t } = useI18n()
+  if (!user?.is_hr || !user.companies.length) {
+    return <p className="card p-8 text-center text-sm text-muted">{t('common.hrOnly')}</p>
+  }
+  return <ClientRequired>{children}</ClientRequired>
 }
 
 export function PlatformOnly({ children }: { children: React.ReactNode }) {

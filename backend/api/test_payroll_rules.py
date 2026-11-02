@@ -189,7 +189,10 @@ class UnpaidLeaveAfterPayrollTests(PayrollTestCase):
         self.assertEqual(len(r.data['payroll_warnings']), 1)
         self.assertIn("Le bulletin d'octobre 2026 est déjà publié", r.data['payroll_warnings'][0])
         self.assertEqual({n.user for n in self.told()}, {self.hr, self.accountant})
-        self.assertEqual(self.told().first().link, f'/bulletins/{self.payslip().id}')
+        self.assertEqual(self.told().get(user=self.hr).link, f'/bulletins/{self.payslip().id}')
+        # The accountant's link opens the client it is about.
+        self.assertEqual(self.told().get(user=self.accountant).link,
+                         f'/bulletins/{self.payslip().id}?client={self.company.id}')
         self.assertFalse(self.told().filter(user=self.manager).exists())
         # The correction now deducts the two days.
         r = self.client_for(self.hr).post(f'/api/payslips/{self.payslip().id}/correct/',
@@ -200,7 +203,8 @@ class UnpaidLeaveAfterPayrollTests(PayrollTestCase):
         self.run_month(month=11)
         r = self.client_for(self.manager).post(f"/api/leaves/{self.ask('2026-11-10', '2026-11-11')}/approve/")
         self.assertIn('relancez le calcul', r.data['payroll_warnings'][0])
-        self.assertEqual(self.told().first().link, '/admin/paie')
+        self.assertEqual(self.told().get(user=self.hr).link, '/admin/paie')
+        self.assertEqual(self.told().get(user=self.accountant).link, f'/admin/paie?client={self.company.id}')
 
     def test_a_leave_over_two_months_names_both(self):
         self.run_month(month=11)

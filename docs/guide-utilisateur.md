@@ -3,8 +3,8 @@
 Ce guide explique comment se servir de SILAH, rôle par rôle. Les noms de boutons et de menus sont ceux affichés à
 l'écran en français. En arabe, ils sont au même endroit, avec la mise en page inversée.
 
-**Version du guide** : 2 novembre 2026, à jour avec le commit `526c985` et la correction « Mes clients » qui le suit. Le journal des mises à jour est en fin de
-document.
+**Version du guide** : 2 novembre 2026, à jour avec le commit `36ad411` et la correction des notifications du
+comptable qui le suit. Le journal des mises à jour est en fin de document.
 
 ## Sommaire
 
@@ -288,6 +288,9 @@ un RH (section 4).
 - **Choisir le client** : à la connexion, aucun client n'est sélectionné. Choisissez-le dans **Mes clients** ou avec
   le sélecteur en haut de l'écran (**Choisir un client…**). Le menu de paie apparaît alors sous le titre
   **Client : nom du client**. Pour quitter le client en cours, choisissez **Choisir un client…** dans le sélecteur.
+- **Notifications** : une notification sur un client (demande à valider, paie à revoir…) ouvre directement ce
+  client. Sans client choisi, **Validations équipe**, les bulletins et les pages de paie demandent d'abord de le
+  choisir.
 - **Nouveau client** : renseignez l'identité de l'employeur. L'entreprise est ajoutée à vos clients et vous pouvez
   ensuite ajouter ses salariés, dont un RH si elle en a un.
 - **Mon compte** : vos coordonnées et votre mot de passe.
@@ -342,6 +345,7 @@ votre manager et le service RH. Le télétravail n'apparaît pas dans le calendr
 
 | Date | Commit | Changement |
 |---|---|---|
+| 2 novembre 2026 | après `36ad411` | Comptable : une notification sur un client ouvre ce client ; sans client choisi, Validations équipe et les bulletins demandent de le choisir au lieu d'afficher une liste vide |
 | 2 novembre 2026 | après `526c985` | Comptable : « Mes clients », aucun client sélectionné à la connexion, client en cours affiché dans le menu ; il ne fait partie d'aucune entreprise cliente |
 | 2 novembre 2026 | `6594a35` | Compléments : calcul selon la date d'embauche, alerte heures sup., variables après publication, rubriques à 10 %, conditions d'une attestation, qui valide les demandes d'un RH, confidentialité du calendrier |
 | 2 novembre 2026 | `6594a35` | Première version : tous les rôles, paie, bulletin rectificatif, demandes à traiter, attestations, mot de passe oublié, usage sur téléphone |

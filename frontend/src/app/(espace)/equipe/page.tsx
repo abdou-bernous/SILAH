@@ -13,6 +13,7 @@ import { StatusBadge } from '@/components/ui/Badge'
 import TeamCalendar from '@/components/TeamCalendar'
 import TeamLeaveModal from '@/components/TeamLeaveModal'
 import ReviewModal from '@/components/ReviewModal'
+import { ClientRequired } from '@/components/AppShell'
 
 type Pending = { kind: 'leave'; item: LeaveRequest } | { kind: 'expense'; item: Expense }
 
@@ -27,6 +28,10 @@ function Actions({ onApprove, onReject }: { onApprove: () => void; onReject: () 
 }
 
 export default function TeamPage() {
+  return <ClientRequired><Team /></ClientRequired>
+}
+
+function Team() {
   const { user, refreshUnread } = useAuth()
   const { t, tx } = useI18n()
   const [tab, setTab] = useState<'todo' | 'history' | 'calendar'>('todo')

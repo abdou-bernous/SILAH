@@ -14,6 +14,7 @@ import Badge, { StatusBadge } from '@/components/ui/Badge'
 import PayslipView from '@/components/PayslipView'
 import CorrectionModal from '@/components/CorrectionModal'
 import { useAuth } from '@/context/AuthContext'
+import { ClientRequired } from '@/components/AppShell'
 
 /** Signed difference of net pay, e.g. "+4 646,40 DA". */
 function signed(diff: number) {
@@ -21,6 +22,10 @@ function signed(diff: number) {
 }
 
 export default function PayslipPage() {
+  return <ClientRequired><Payslip /></ClientRequired>
+}
+
+function Payslip() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const { user } = useAuth()

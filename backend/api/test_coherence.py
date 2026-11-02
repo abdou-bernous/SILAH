@@ -182,6 +182,17 @@ class AccountantClientTests(TwoCompaniesTestCase):
         self.assertNotIn(self.accountant.id, {p['id'] for p in hr.get('/api/leaves/calendar/?year=2026&month=3').data['people']})
         self.assertIsNone(self.client_for(self.accountant).get('/api/auth/me/').data['company'])
 
+    def test_his_notifications_open_on_the_client_they_are_about(self):
+        # `other` has no manager: his requests go to the company's HR and to its accountant.
+        self.client_for(self.other).post('/api/profile-requests/', {'changes': {'city': 'Blida'}}, format='json')
+        self.client_for(self.other).post('/api/expenses/', {'date': date.today().isoformat(), 'amount': '500',
+                                                            'description': 'Taxi'}, format='json')
+        links = list(Notification.objects.filter(user=self.accountant).values_list('link', flat=True))
+        self.assertCountEqual(links, [f'/admin/demandes?client={self.company.id}', f'/equipe?client={self.company.id}'])
+        # HR belongs to the company: nothing to pick, the links stay as they are.
+        self.assertCountEqual(Notification.objects.filter(user=self.hr).values_list('link', flat=True),
+                              ['/admin/demandes', '/equipe'])
+
 
 class TenantIsolationTests(TwoCompaniesTestCase):
     def test_document_cannot_be_reassigned_to_another_company(self):

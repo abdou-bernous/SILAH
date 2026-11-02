@@ -1,7 +1,7 @@
 'use client'
 import { useRouter } from 'next/navigation'
 import { BellIcon } from '@heroicons/react/24/outline'
-import api from '@/lib/api'
+import api, { getActiveCompany, setActiveCompany } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { useFetch } from '@/lib/useFetch'
 import { useI18n } from '@/lib/i18n'
@@ -12,14 +12,24 @@ import Button from '@/components/ui/Button'
 
 export default function NotificationsPage() {
   const router = useRouter()
-  const { refreshUnread } = useAuth()
+  const { user, refreshUnread } = useAuth()
   const { t } = useI18n()
   const { data, loading, reload } = useFetch<Notification[]>('/notifications/')
 
   const open = async (n: Notification) => {
     if (!n.read) { await api.post(`/notifications/${n.id}/read/`); refreshUnread() }
-    if (n.link) router.push(n.link)
-    else reload()
+    if (!n.link) return reload()
+    // A notification sent to an accountant names the client it is about (?client=<id>): open that client.
+    const url = new URL(n.link, window.location.origin)
+    const client = url.searchParams.get('client')
+    url.searchParams.delete('client')
+    const target = url.pathname + url.search + url.hash
+    if (client && client !== getActiveCompany() && user?.companies.some((c) => String(c.id) === client)) {
+      setActiveCompany(client)
+      window.location.assign(target)   // reload, so the whole interface switches to that client
+    } else {
+      router.push(target)
+    }
   }
   const readAll = async () => { await api.post('/notifications/read_all/'); refreshUnread(); reload() }
 
